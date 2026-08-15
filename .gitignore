@@ -1,0 +1,102 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment & secrets — NEVER commit these ────────────────────────────────
+.env
+.env.local
+.env.production
+*.pem
+*.key
+secrets/
+
+# ── Node / web-ui ─────────────────────────────────────────────────────────────
+web-ui/node_modules/
+web-ui/.next/
+web-ui/dist/
+web-ui/.cache/
+node_modules/
+
+# ── Runtime databases & model artifacts ───────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.pkl
+*.joblib
+market_regime_hmm.pkl
+celerybeat-schedule
+celerybeat.pid
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Don't ignore docker-compose.yml — it's part of the repo.
+# But do ignore generated volumes and overrides.
+docker-compose.override.yml
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ── Logs & reports ────────────────────────────────────────────────────────────
+logs/
+*.log
+reports/
+reports_cache/
+*_report.md
+sell_report.md
+tax_report.md
+vif_report.md
+drawdown_report.md
+slippage_report.md
+alpha_report.md
+backtest_report.md
+liquidity_report.md
+liquidity.json
+thesis_break.json
+test_output*.txt
+ops/daily_reports/
+ops/institutional_daily_scorecard.json
+
+# ── Debug / scratch outputs (never commit these) ─────────────────────────────
+check_fail*.txt
+disq_fail*.txt
+final_fail*.txt
+ops/ticker_list_*.txt
+ops/audit_result.txt
+
+# ── Data directory (populated at runtime) ────────────────────────────────────
+data/
+runtime/
+
+# Agent State
+.gemini/
+.agent/
+
+# Bhavcopy caches
+bhavcopy.db
+scratch/
+*.csv

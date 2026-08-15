@@ -1,0 +1,762 @@
+# modules/data_manager.py
+# Sovereign AI - Production Data Manager
+# Fully upgraded Data Pipeline: Abstract DataProvider, SQLite Cache, Tenacity Retries, Data Quality filters.
+
+import asyncio
+import yfinance as yf
+from modules.yf_session import get_yf_session
+from modules.bhavcopy import get_eod_price, download_bhavcopy
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+from typing import Dict, List, Optional, Any
+import logging
+import sqlite3
+import pickle
+import time
+from abc import ABC, abstractmethod
+from datetime import datetime
+
+import pandas_market_calendars as mcal
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+logger = logging.getLogger(__name__)
+
+_FUNDAMENTAL_KEYS = (
+    "marketCap",
+    "trailingPE",
+    "returnOnEquity",
+    "debtToEquity",
+    "revenueGrowth",
+    "earningsGrowth",
+    "sector",
+    "industry",
+)
+
+_TRANSIENT_ERROR_HINTS = (
+    "timeout",
+    "timed out",
+    "429",
+    "rate limit",
+    "too many requests",
+    "temporarily unavailable",
+    "connection reset",
+    "ssl",
+    "name resolution",
+)
+
+
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
+def _normalize_info(
+    primary_info: Optional[Dict[str, Any]],
+    *,
+    fallback_info: Optional[Dict[str, Any]] = None,
+    alias_map: Optional[Dict[str, tuple]] = None,
+) -> Dict[str, Any]:
+    """Build canonical info dict using provider payload + yfinance fallback."""
+    normalized: Dict[str, Any] = {}
+    if isinstance(fallback_info, dict):
+        for key, value in fallback_info.items():
+            if _has_value(value):
+                normalized[key] = value
+    if isinstance(primary_info, dict):
+        for key, value in primary_info.items():
+            if _has_value(value):
+                normalized[key] = value
+    if alias_map and isinstance(primary_info, dict):
+        for target, aliases in alias_map.items():
+            if _has_value(normalized.get(target)):
+                continue
+            for alias in aliases:
+                candidate = primary_info.get(alias)
+                if _has_value(candidate):
+                    normalized[target] = candidate
+                    break
+    return normalized
+
+
+def _is_missing_or_zero(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        text = value.strip().lower()
+        return text in {"", "none", "nan", "na", "null", "0", "0.0"}
+    try:
+        num = float(value)
+        return num == 0.0
+    except Exception:
+        return False
+
+
+def _fundamental_coverage(info: Any) -> int:
+    if not isinstance(info, dict):
+        return 0
+    covered = 0
+    for key in _FUNDAMENTAL_KEYS:
+        value = info.get(key)
+        if key in {"marketCap", "trailingPE"}:
+            if _is_missing_or_zero(value):
+                continue
+        elif not _has_value(value):
+            continue
+        covered += 1
+    return covered
+
+
+def _is_payload_skeletal(payload: Any, *, min_coverage: int = 2) -> bool:
+    if not isinstance(payload, dict):
+        return True
+    coverage = _fundamental_coverage(payload.get("info", {}))
+    return coverage < int(min_coverage)
+
+
+async def _run_executor_safe(loop, executor, fn, default):
+    try:
+        return await loop.run_in_executor(executor, fn)
+    except Exception as e:
+        logger.debug(f"Executor Error in DataManager: {e}")
+        return default
+
+
+_PNSEA_INFO_ALIASES = {
+    "marketCap": ("marketCap", "marketCapTotal", "marketCapitalization"),
+    "trailingPE": ("trailingPE", "pe", "pE"),
+    "returnOnEquity": ("returnOnEquity", "roe"),
+    "debtToEquity": ("debtToEquity", "debtEquity"),
+    "revenueGrowth": ("revenueGrowth", "salesGrowth"),
+    "earningsGrowth": ("earningsGrowth", "profitGrowth"),
+    "bookValue": ("bookValue",),
+    "trailingEps": ("trailingEps", "eps"),
+    "fiftyTwoWeekHigh": ("fiftyTwoWeekHigh", "weekHigh52"),
+    "fiftyTwoWeekLow": ("fiftyTwoWeekLow", "weekLow52"),
+    "sector": ("sector", "sectorName"),
+    "industry": ("industry", "industryName"),
+}
+
+_NSEPYTHON_INFO_ALIASES = {
+    "marketCap": ("marketCap", "marketCapitalization"),
+    "trailingPE": ("trailingPE", "pe", "peRatio"),
+    "returnOnEquity": ("returnOnEquity", "roe"),
+    "debtToEquity": ("debtToEquity", "debtEquity", "deRatio"),
+    "revenueGrowth": ("revenueGrowth", "salesGrowth"),
+    "earningsGrowth": ("earningsGrowth", "profitGrowth", "epsGrowth"),
+    "bookValue": ("bookValue",),
+    "trailingEps": ("trailingEps", "eps"),
+    "fiftyTwoWeekHigh": ("fiftyTwoWeekHigh", "high52Week"),
+    "fiftyTwoWeekLow": ("fiftyTwoWeekLow", "low52Week"),
+    "sector": ("sector",),
+    "industry": ("industry",),
+}
+
+# --- Dynamic Market Calendar ---
+def get_valid_trading_days(start_date, end_date):
+    nse = mcal.get_calendar('NSE')
+    schedule = nse.schedule(start_date=start_date, end_date=end_date)
+    return schedule.index.date
+
+# --- Persistent Caching (Pickle + SQLite) ---
+class PersistentCache:
+    def __init__(self, db_path="data_cache.db", ttl_seconds=86400):
+        self.db_path = db_path
+        self.ttl = ttl_seconds
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
+            conn.execute('''CREATE TABLE IF NOT EXISTS cache
+                            (key TEXT PRIMARY KEY, value BLOB, timestamp REAL)''')
+            conn.commit()
+
+    def get(self, key: str) -> Optional[Any]:
+        try:
+            with sqlite3.connect(self.db_path, timeout=5) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value, timestamp FROM cache WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                if row:
+                    val, ts = row
+                    if time.time() - ts < self.ttl:
+                        return pickle.loads(val)
+                    else:
+                        cursor.execute("DELETE FROM cache WHERE key = ?", (key,))
+                        conn.commit()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache read error for {key}: {e}")
+            return None
+
+    def set(self, key: str, value: Any):
+        try:
+            with sqlite3.connect(self.db_path, timeout=5) as conn:
+                conn.execute("INSERT OR REPLACE INTO cache (key, value, timestamp) VALUES (?, ?, ?)",
+                             (key, pickle.dumps(value), time.time()))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Cache write error for {key}: {e}")
+
+# --- Abstract Data Provider ---
+class DataProvider(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+    @abstractmethod
+    async def fetch_fundamentals(self, symbol: str) -> Dict:
+        pass
+
+# --- Concrete Providers ---
+class PNSEAProvider(DataProvider):
+    @property
+    def name(self): return "pnsea"
+    
+    def __init__(self, executor):
+        self.executor = executor
+        try:
+            from pnsea import NSE
+            self.nse = NSE()
+            self.available = True
+        except ImportError:
+            self.available = False
+
+    async def fetch_fundamentals(self, symbol: str) -> Dict:
+        if not self.available:
+            raise ImportError("PNSEA not available")
+        loop = asyncio.get_running_loop()
+        raw = await loop.run_in_executor(self.executor, lambda: self.nse.equity.info(symbol.replace(".NS", "")))
+        pledged = await _run_executor_safe(
+            loop,
+            self.executor,
+            lambda: self.nse.insider.getPledgedData(symbol.replace(".NS", "")),
+            {},
+        )
+
+        yf_t = yf.Ticker(symbol, session=get_yf_session())
+        fin = await _run_executor_safe(loop, self.executor, lambda: yf_t.financials, pd.DataFrame())
+        bs = await _run_executor_safe(loop, self.executor, lambda: yf_t.balance_sheet, pd.DataFrame())
+        cf = await _run_executor_safe(loop, self.executor, lambda: yf_t.cash_flow, pd.DataFrame())
+        info = _normalize_info(raw.get("info", {}), alias_map=_PNSEA_INFO_ALIASES)
+
+        cfo_pat = 0.0
+        try:
+            cfo_pat = raw.get("info", {}).get("cashFlowFromOperations", 0) / max(raw.get("info", {}).get("netProfit", 1), 1)
+        except (ZeroDivisionError, TypeError, ValueError) as _cfo_err:
+            logger.warning("[%s] CFO/PAT ratio calculation failed: %s", symbol, _cfo_err)
+
+        return {
+            "symbol": symbol,
+            "source": self.name,
+            "price": raw.get("priceInfo", {}).get("lastPrice"),
+            "roe": raw.get("info", {}).get("roe"),
+            "sales_growth": raw.get("info", {}).get("salesGrowth"),
+            "cfo_pat": cfo_pat,
+            "pledge_percent": pledged.get("pledgedPercentage", 0) if isinstance(pledged, dict) else 0,
+            "promoter_holding": raw.get("info", {}).get("promoterHolding"),
+            "fii_dii": {
+                "fii": raw.get("info", {}).get("fiiHolding"),
+                "dii": raw.get("info", {}).get("diiHolding")
+            },
+            "info": info,
+            "financials": fin,
+            "balance_sheet": bs,
+            "cash_flow": cf
+        }
+
+class NSEPythonProvider(DataProvider):
+    @property
+    def name(self): return "nsepython"
+
+    def __init__(self, executor):
+        self.executor = executor
+        try:
+            # NOTE: nsepython renamed its public API at some point - get_quote,
+            # get_fundamentals, get_pledged_shares, get_shareholding, get_bulk_deals
+            # no longer exist in current releases (>=2.9x). This provider was
+            # silently dead (ImportError -> available=False) on every run until
+            # this was caught by actually importing against the installed package.
+            from nsepython import nse_quote, get_bulkdeals
+            self.api_quote = nse_quote
+            self.api_bulk = get_bulkdeals
+            self.available = True
+        except ImportError:
+            self.available = False
+
+    async def fetch_fundamentals(self, symbol: str) -> Dict:
+        if not self.available:
+            raise ImportError("nsepython not available")
+        loop = asyncio.get_running_loop()
+        sym = symbol.replace(".NS", "")
+
+        quote = await loop.run_in_executor(self.executor, self.api_quote, sym)
+        if not isinstance(quote, dict):
+            quote = {}
+        bulk = await _run_executor_safe(loop, self.executor, lambda: self.api_bulk(), [])
+
+        # Current nsepython no longer exposes dedicated fundamentals/pledge/
+        # shareholding endpoints, so this provider now covers price + basic
+        # security info only. ROE/growth/etc. still get backfilled from
+        # yfinance downstream (screener._needs_info_backfill) when missing -
+        # this provider mainly adds a second, non-Yahoo source of last-traded
+        # price so a Yahoo outage doesn't take the whole symbol down.
+        raw_info = quote.get("info", {}) if isinstance(quote.get("info"), dict) else {}
+        security_info = quote.get("securityInfo", {}) if isinstance(quote.get("securityInfo"), dict) else {}
+        price_info = quote.get("priceInfo", {}) if isinstance(quote.get("priceInfo"), dict) else {}
+        merged_raw = {**security_info, **raw_info}
+        info = _normalize_info(merged_raw, alias_map=_NSEPYTHON_INFO_ALIASES)
+
+        yf_t = yf.Ticker(symbol, session=get_yf_session())
+        fin = await _run_executor_safe(loop, self.executor, lambda: yf_t.financials, pd.DataFrame())
+        bs = await _run_executor_safe(loop, self.executor, lambda: yf_t.balance_sheet, pd.DataFrame())
+        cf = await _run_executor_safe(loop, self.executor, lambda: yf_t.cash_flow, pd.DataFrame())
+
+        return {
+            "symbol": symbol,
+            "source": self.name,
+            "price": price_info.get("lastPrice"),
+            "roe": info.get("returnOnEquity"),
+            "sales_growth": info.get("revenueGrowth"),
+            "cfo_pat": 0,
+            "pledge_percent": 0,
+            "promoter_holding": 0,
+            "fii_dii": {},
+            "bulk_deals": bulk,
+            "info": info,
+            "financials": fin,
+            "balance_sheet": bs,
+            "cash_flow": cf
+        }
+
+class YFinanceProvider(DataProvider):
+    @property
+    def name(self): return "yfinance"
+
+    def __init__(self, executor):
+        self.executor = executor
+        self.available = True
+
+    async def fetch_fundamentals(self, symbol: str) -> Dict:
+        loop = asyncio.get_running_loop()
+        ticker = yf.Ticker(symbol, session=get_yf_session())
+        info = await _run_executor_safe(loop, self.executor, lambda: ticker.info, {})
+        if not isinstance(info, dict):
+            info = {}
+        if _is_payload_skeletal({"info": info}, min_coverage=1):
+            fast = await _run_executor_safe(loop, self.executor, lambda: dict(getattr(ticker, "fast_info", {}) or {}), {})
+            if isinstance(fast, dict) and fast:
+                if not _has_value(info.get("currentPrice")) and _has_value(fast.get("lastPrice")):
+                    info["currentPrice"] = fast.get("lastPrice")
+                if not _has_value(info.get("marketCap")) and _has_value(fast.get("marketCap")):
+                    info["marketCap"] = fast.get("marketCap")
+                if not _has_value(info.get("fiftyTwoWeekHigh")) and _has_value(fast.get("yearHigh")):
+                    info["fiftyTwoWeekHigh"] = fast.get("yearHigh")
+                if not _has_value(info.get("fiftyTwoWeekLow")) and _has_value(fast.get("yearLow")):
+                    info["fiftyTwoWeekLow"] = fast.get("yearLow")
+        fin = await _run_executor_safe(loop, self.executor, lambda: ticker.financials, pd.DataFrame())
+        bs = await _run_executor_safe(loop, self.executor, lambda: ticker.balance_sheet, pd.DataFrame())
+        cf = await _run_executor_safe(loop, self.executor, lambda: ticker.cash_flow, pd.DataFrame())
+        
+        return {
+            "symbol": symbol,
+            "source": self.name,
+            "price": info.get("currentPrice"),
+            "roe": info.get("returnOnEquity"),
+            "sales_growth": info.get("revenueGrowth"),
+            "pledge_percent": 0,
+            "info": info,
+            "financials": fin,
+            "balance_sheet": bs,
+            "cash_flow": cf
+        }
+
+
+class BhavcopyProvider(DataProvider):
+    """Instant EOD price from local bhavcopy.db — zero network calls."""
+    @property
+    def name(self): return "bhavcopy"
+
+    def __init__(self, executor):
+        self.executor = executor
+        self.available = True
+        # Auto-download on first use
+        try:
+            download_bhavcopy()
+        except Exception as e:
+            logger.warning(f"Bhavcopy auto-download failed: {e}")
+            self.available = False
+
+    async def fetch_fundamentals(self, symbol: str) -> Dict:
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(self.executor, get_eod_price, symbol)
+        if not row:
+            raise ValueError(f"No bhavcopy data for {symbol}")
+        info = {
+            "currentPrice": row["close"],
+            "previousClose": row["prev_close"],
+            "open": row["open"],
+            "dayHigh": row["high"],
+            "dayLow": row["low"],
+        }
+        return {
+            "symbol": symbol,
+            "source": self.name,
+            "price": row["close"],
+            "info": info,
+            "financials": pd.DataFrame(),
+            "balance_sheet": pd.DataFrame(),
+            "cash_flow": pd.DataFrame(),
+        }
+
+# --- Main Data Manager ---
+class DataManager:
+    _shared_fail_streak = {}
+    _shared_cooldown_until = {}
+
+    def __init__(self, max_concurrency: int = 15):
+        self.max_concurrency = int(max_concurrency)
+        self.semaphore = asyncio.Semaphore(max_concurrency)
+        self.executor = ThreadPoolExecutor(max_workers=max_concurrency)
+        self.provider_timeout_seconds = 16
+        self.yfinance_timeout_seconds = 22
+        self.history_timeout_seconds = 18
+        self.provider_fail_streak = self._shared_fail_streak
+        self.provider_cooldown_until = self._shared_cooldown_until
+        
+        # Priority Fallback List
+        self.providers = [
+            BhavcopyProvider(self.executor),
+            PNSEAProvider(self.executor),
+            NSEPythonProvider(self.executor),
+            YFinanceProvider(self.executor)
+        ]
+        self._pnsea_provider = self.providers[0] if isinstance(self.providers[0], PNSEAProvider) else None
+
+        # Visibility: without this, a broken pnsea/nsepython install silently
+        # collapses the "priority fallback" architecture down to yfinance-only,
+        # which is exactly what was happening (source=yfinance for every symbol).
+        provider_status = ", ".join(
+            f"{p.name}={'OK' if getattr(p, 'available', False) else 'UNAVAILABLE'}"
+            for p in self.providers
+        )
+        logger.warning(f"DataManager providers: {provider_status}")
+        if not getattr(self._pnsea_provider, "available", False):
+            logger.warning(
+                "pnsea not available -> price history has NO fallback and is "
+                "fully dependent on yfinance. Run 'pip install pnsea' to enable "
+                "NSE-direct history as a backup when Yahoo rate-limits."
+            )
+
+        # Persistent Cache (TTL: 24h for fundamentals, 1h for fast data)
+        self.cache = PersistentCache()
+        
+        current_year = datetime.now().year
+        self.valid_trading_days = get_valid_trading_days(f'{current_year-10}-01-01', f'{current_year+2}-12-31')
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    def _is_transient_error(self, exc: Exception) -> bool:
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+            return True
+        text = str(exc).lower()
+        return any(hint in text for hint in _TRANSIENT_ERROR_HINTS)
+
+    def _record_provider_success(self, provider_name: str):
+        self.provider_fail_streak[provider_name] = 0
+        self.provider_cooldown_until.pop(provider_name, None)
+
+    def _record_provider_failure(self, provider_name: str, *, transient: bool):
+        streak = int(self.provider_fail_streak.get(provider_name, 0)) + 1
+        self.provider_fail_streak[provider_name] = streak
+        if transient and streak >= 4:
+            cooldown = min(120, streak * 10)  # Capped at 2 mins for standard rate limits
+            self.provider_cooldown_until[provider_name] = time.time() + cooldown
+            logger.warning(f"🚨 Provider {provider_name} entered cooldown for {cooldown}s (streak: {streak})")
+
+    async def _adaptive_pause(self, provider_name: str):
+        streak = int(self.provider_fail_streak.get(provider_name, 0))
+        if streak <= 1:
+            return
+        pause_seconds = min(2.5, 0.2 * streak)
+        await asyncio.sleep(pause_seconds)
+
+    def fetch_fundamentals(self, symbol: str) -> Dict:
+        """Synchronous wrapper around async_fetch_fundamentals."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, self.async_fetch_fundamentals(symbol)).result()
+        return asyncio.run(self.async_fetch_fundamentals(symbol))
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((asyncio.TimeoutError, TimeoutError)),
+    )
+    async def async_fetch_fundamentals(self, symbol: str) -> Dict:
+        """Main entry point - returns normalized dict with 12-point checklist data"""
+        async with self.semaphore:
+            cache_key = f"fund_{symbol}"
+            cached = self.cache.get(cache_key)
+            if cached:
+                return cached
+
+            incomplete_payload = None
+
+            # Try providers in priority order
+            for provider in self.providers:
+                if not getattr(provider, 'available', True):
+                    continue
+                provider_name = provider.name
+                if self.provider_cooldown_until.get(provider_name, 0) > time.time():
+                    continue
+                try:
+                    timeout_s = self.yfinance_timeout_seconds if provider_name == "yfinance" else self.provider_timeout_seconds
+                    data = await asyncio.wait_for(provider.fetch_fundamentals(symbol), timeout=timeout_s)
+                    if data and "error" not in data:
+                        if _is_payload_skeletal(data):
+                            incomplete_payload = data
+                            if provider_name != "yfinance":
+                                self._record_provider_failure(provider_name, transient=False)
+                                continue
+                        self.cache.set(cache_key, data)
+                        self._record_provider_success(provider_name)
+                        return data
+                except Exception as e:
+                    transient = self._is_transient_error(e)
+                    self._record_provider_failure(provider_name, transient=transient)
+                    if transient:
+                        await self._adaptive_pause(provider_name)
+                    logger.warning(f"Provider {provider.name} failed for {symbol}: {e}")
+                    continue
+
+            if incomplete_payload:
+                return incomplete_payload
+            return {"symbol": symbol, "error": "All providers failed", "source": "fallback_failed"}
+
+    @staticmethod
+    def _normalize_nse_history_df(raw: pd.DataFrame) -> pd.DataFrame:
+        """Both pnsea and nsepython wrap the same NSE historical/cm/equity
+        endpoint and return the same CH_* record columns, so one normalizer
+        covers both."""
+        if raw is None or raw.empty or "CH_TIMESTAMP" not in raw.columns:
+            return pd.DataFrame()
+        df = pd.DataFrame({
+            "Open": pd.to_numeric(raw.get("CH_OPENING_PRICE"), errors="coerce"),
+            "High": pd.to_numeric(raw.get("CH_TRADE_HIGH_PRICE"), errors="coerce"),
+            "Low": pd.to_numeric(raw.get("CH_TRADE_LOW_PRICE"), errors="coerce"),
+            "Close": pd.to_numeric(raw.get("CH_CLOSING_PRICE"), errors="coerce"),
+            "Volume": pd.to_numeric(raw.get("CH_TOT_TRADED_QTY"), errors="coerce"),
+        })
+        df.index = pd.to_datetime(raw.get("CH_TIMESTAMP"), errors="coerce")
+        return df.dropna(subset=["Close"]).sort_index()
+
+    @staticmethod
+    def _period_to_days(period: str) -> int:
+        days = 400  # default ~1y + buffer
+        try:
+            p = str(period).strip().lower()
+            if p.endswith("y"):
+                days = int(float(p[:-1]) * 365) + 35
+            elif p.endswith("mo"):
+                days = int(float(p[:-2]) * 30) + 15
+            elif p.endswith("d"):
+                days = int(float(p[:-1])) + 10
+        except (ValueError, TypeError):
+            pass
+        return days
+
+    async def _fetch_history_nse_direct(self, symbol: str, period: str = "1y") -> pd.DataFrame:
+        """Price history straight from NSE (pnsea, then nsepython), bypassing
+        yfinance/Yahoo entirely. Used as a fallback when yfinance is
+        rate-limited or empty, so a Yahoo outage no longer means zero price
+        history for the scan. Two independent NSE-scraping libraries are
+        tried in sequence since either one can individually break/rate-limit."""
+        loop = asyncio.get_running_loop()
+        days = self._period_to_days(period)
+        to_date = datetime.now()
+        from_date = to_date - pd.Timedelta(days=days)
+        bare_symbol = symbol.replace(".NS", "").replace(".BO", "")
+        from_str, to_str = from_date.strftime("%d-%m-%Y"), to_date.strftime("%d-%m-%Y")
+
+        if getattr(self._pnsea_provider, "available", False):
+            try:
+                raw = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self.executor,
+                        lambda: self._pnsea_provider.nse.equity.history(bare_symbol, from_str, to_str),
+                    ),
+                    timeout=self.history_timeout_seconds,
+                )
+                df = self._normalize_nse_history_df(raw)
+                if not df.empty:
+                    logger.info(f"[{symbol}] Recovered {len(df)} price bars via NSE-direct fallback (pnsea).")
+                    return df
+            except Exception as exc:
+                logger.debug(f"[{symbol}] NSE-direct history fallback (pnsea) failed: {exc}")
+
+        nsepython_provider = next((p for p in self.providers if p.name == "nsepython"), None)
+        if getattr(nsepython_provider, "available", False):
+            try:
+                from nsepython import equity_history
+                raw = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self.executor,
+                        lambda: equity_history(bare_symbol, "EQ", from_str, to_str),
+                    ),
+                    timeout=self.history_timeout_seconds * 2,  # chunks into 40-day windows internally, needs more time
+                )
+                df = self._normalize_nse_history_df(raw)
+                if not df.empty:
+                    logger.info(f"[{symbol}] Recovered {len(df)} price bars via NSE-direct fallback (nsepython).")
+                    return df
+            except Exception as exc:
+                logger.debug(f"[{symbol}] NSE-direct history fallback (nsepython) failed: {exc}")
+
+        return pd.DataFrame()
+
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
+    async def fetch_history(self, symbol: str, period: str = "1y") -> pd.DataFrame:
+        """Fetch historical price data with quality checks"""
+        # Respect global cooldown to avoid hammering when rate-limited
+        cooldown_remaining = self.provider_cooldown_until.get("yfinance", 0) - time.time()
+        if cooldown_remaining > 0:
+            logger.warning(f"[{symbol}] yfinance in cooldown for {cooldown_remaining:.1f}s. Trying NSE-direct fallback.")
+            fallback_df = await self._fetch_history_nse_direct(symbol, period)
+            if not fallback_df.empty:
+                return fallback_df
+            raise ConnectionError("yfinance globally rate limited and NSE-direct fallback unavailable")
+
+        async with self.semaphore:
+            loop = asyncio.get_running_loop()
+            ticker = yf.Ticker(symbol, session=get_yf_session())
+            df = pd.DataFrame()
+            yf_exc = None
+            for attempt in range(2):
+                try:
+                    df = await asyncio.wait_for(
+                        loop.run_in_executor(self.executor, lambda: ticker.history(period=period)),
+                        timeout=self.history_timeout_seconds,
+                    )
+                    yf_exc = None
+                except Exception as exc:
+                    yf_exc = exc
+                    transient = self._is_transient_error(exc)
+                    self._record_provider_failure("yfinance", transient=transient)
+                    if attempt == 0 and transient:
+                        await asyncio.sleep(0.6)
+                        continue
+                    break
+                self._record_provider_success("yfinance")
+                if df.empty or 'Close' not in df.columns:
+                    if attempt == 0:
+                        await asyncio.sleep(0.5)
+                        continue
+                    break
+                break
+
+            if df.empty or 'Close' not in df.columns:
+                # yfinance exhausted its attempts (error or empty) - try NSE-direct
+                # before giving up, instead of returning empty straight away.
+                fallback_df = await self._fetch_history_nse_direct(symbol, period)
+                if not fallback_df.empty:
+                    return fallback_df
+                if yf_exc is not None:
+                    raise yf_exc
+                return pd.DataFrame()
+                
+            # --- Data Quality Checks ---
+            # 1. Price Continuity (Remove extreme spikes > 50% in one day unless penny stock)
+            pct_change = df['Close'].pct_change().abs()
+            glitch_mask = (df['Close'] > 10) & (pct_change > 0.5)
+            if glitch_mask.any():
+                logger.warning(f"[{symbol}] Data glitch detected: price jump > 50%. Ignoring anomalies.")
+                df = df[~glitch_mask]
+                
+            # 2. Volume Sanity check
+            if 'Volume' in df.columns:
+                df.loc[df['Volume'] < 0, 'Volume'] = 0
+            
+            # --- MARKET CLOSED FIX (Dynamic) ---
+            today = datetime.now().date()
+            is_valid_trading_day = today in self.valid_trading_days
+            is_holiday_or_weekend = not is_valid_trading_day
+            
+            df = df.dropna(subset=['Close'])
+            if len(df) >= 2 and 'Volume' in df.columns and (pd.isna(df['Volume'].iloc[-1]) or df['Volume'].iloc[-1] == 0 or is_holiday_or_weekend):
+                df = df.iloc[:-1]
+                
+            return df
+
+    async def fetch_quarterly_results(self, symbol: str) -> List[Dict]:
+        """Fetch quarterly financial results"""
+        async with self.semaphore:
+            loop = asyncio.get_running_loop()
+            ticker = yf.Ticker(symbol, session=get_yf_session())
+            qf = await loop.run_in_executor(self.executor, lambda: ticker.quarterly_financials)
+            if qf.empty: return []
+            
+            results = []
+            for col in qf.columns:
+                results.append({
+                    "date": col.strftime('%Y-%m-%d') if hasattr(col, 'strftime') else str(col),
+                    "revenue": qf.loc["Total Revenue", col] if "Total Revenue" in qf.index else 0,
+                    "profit": qf.loc["Net Income", col] if "Net Income" in qf.index else 0
+                })
+            return results
+
+    async def fetch_batch(self, symbols: List[str]) -> Dict[str, Dict]:
+        tasks = [self.async_fetch_fundamentals(s) for s in symbols]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return {sym: res for sym, res in zip(symbols, results) if not isinstance(res, Exception)}
+
+    async def close(self):
+        self.executor.shutdown(wait=True)
+
+
+class DataSourceManager:
+    """Manager that handles multiple DataSource fallbacks (yfinance, nse, groww)."""
+    def __init__(self):
+        from modules.sources.yfinance_source import YFinanceSource
+        from modules.sources.nse_source import NSESource
+        from modules.sources.groww_source import GrowwSource
+        self.sources = [YFinanceSource(), NSESource(), GrowwSource()]
+
+    def fetch_fundamentals(self, symbol: str) -> Dict:
+        for source in self.sources:
+            try:
+                res = source.fetch_fundamentals(symbol)
+                if res and "info" in res:
+                    return res
+            except Exception:
+                continue
+        return {"error": "All sources failed"}
+
+    def fetch_history(self, symbol: str, period: str = "1y") -> pd.DataFrame:
+        for source in self.sources:
+            try:
+                df = source.fetch_history(symbol, period=period)
+                if df is not None and not df.empty:
+                    return df
+            except Exception:
+                continue
+        return pd.DataFrame()
+
+
+# For backward compatibility singleton
+data_manager = DataManager()
