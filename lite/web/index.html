@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign Lite v7</title>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Geist+Mono:wght@300;400;500;600&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg0:#04060d;--bg1:#080c17;--bg2:#0c1120;--bg3:#111928;--bg4:#161f30;
+  --wire:rgba(255,255,255,.055);--wire2:rgba(255,255,255,.10);--wire3:rgba(255,255,255,.18);
+  --t0:#ffffff;--t1:#c9d4f0;--t2:#6d7fa8;--t3:#3a445e;
+  --acid:#00ffa3;--acid-d:rgba(0,255,163,.10);--acid-g:0 0 20px rgba(0,255,163,.22);
+  --rose:#ff3060;--rose-d:rgba(255,48,96,.10);
+  --gold:#ffb700;--gold-d:rgba(255,183,0,.10);
+  --sky:#3d9eff;--sky-d:rgba(61,158,255,.10);
+  --mono:'Geist Mono',monospace;--sans:'Geist',sans-serif;--display:'Syne',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg0);color:var(--t1);font-family:var(--sans);font-size:13px}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent 0,transparent 1px,rgba(255,255,255,.010) 1px,rgba(255,255,255,.010) 2px);background-size:100% 2px;opacity:.6}
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(ellipse 60% 30% at 5% 0%,rgba(0,255,163,.03) 0%,transparent 70%),
+             radial-gradient(ellipse 40% 40% at 95% 5%,rgba(61,158,255,.04) 0%,transparent 70%)}
+#root{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh}
+
+.nav{display:flex;align-items:center;padding:0 24px;height:52px;background:rgba(4,6,13,.94);backdrop-filter:blur(24px);border-bottom:1px solid var(--wire);flex-shrink:0}
+.nav-brand{display:flex;align-items:center;gap:10px;padding-right:16px;margin-right:8px;border-right:1px solid var(--wire);flex-shrink:0}
+.nav-sigma{width:28px;height:28px;border-radius:7px;background:conic-gradient(from 135deg,var(--acid),var(--sky),var(--acid));display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:800;font-size:13px;color:var(--bg0)}
+.nav-wordmark{font-family:var(--display);font-size:14px;font-weight:800;letter-spacing:2px;color:var(--t0)}
+.nav-sub{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;text-transform:uppercase}
+.nav-tabs{display:flex;gap:1px;flex:1;padding:0 12px;overflow-x:auto}
+.nav-tab{padding:0 14px;height:52px;display:flex;align-items:center;font-family:var(--mono);font-size:10px;font-weight:500;color:var(--t3);border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;cursor:pointer;background:none;border-top:none;border-left:none;border-right:none}
+.nav-tab:hover{color:var(--t1);border-bottom-color:var(--wire2)}
+.nav-tab.active{color:var(--acid);border-bottom-color:var(--acid)}
+.nav-right{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid var(--wire);flex-shrink:0;font-family:var(--mono);font-size:9px;color:var(--t2)}
+.regime-chip{font-family:var(--mono);font-size:9px;font-weight:600;padding:3px 9px;border-radius:4px}
+.regime-BULL{background:var(--acid-d);color:var(--acid)}
+.regime-BEAR{background:var(--rose-d);color:var(--rose)}
+.regime-SIDEWAYS{background:var(--gold-d);color:var(--gold)}
+.regime-HIGH_VOLATILITY{background:var(--rose-d);color:var(--rose)}
+.vix-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:var(--bg2);border:1px solid var(--wire);font-family:var(--mono);font-size:10px}
+.vix-dot{width:5px;height:5px;border-radius:50%}
+.vix-dot.safe{background:var(--acid);box-shadow:0 0 6px var(--acid)}
+.vix-dot.warn{background:var(--gold);box-shadow:0 0 6px var(--gold)}
+.vix-dot.risk{background:var(--rose);box-shadow:0 0 6px var(--rose)}
+
+.body{flex:1;overflow-y:auto;padding:20px 24px}
+.wrap{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.screen-title{font-family:var(--display);font-size:22px;font-weight:800;color:var(--t0);letter-spacing:.3px}
+.screen-sub{font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:1px}
+
+.card{background:var(--bg2);border:1px solid var(--wire);border-radius:12px;padding:16px;overflow:hidden}
+.card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-title{font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--t2);display:flex;align-items:center;gap:8px}
+.card-title::before{content:'';width:10px;height:1px;background:var(--acid)}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{font-family:var(--mono);font-size:8px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--wire);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);color:var(--t1);white-space:nowrap}
+tr:hover td{background:rgba(255,255,255,.015)}
+.tbl-wrap{overflow-x:auto}
+.num{font-family:var(--mono);text-align:right}
+.up{color:var(--acid)}.dn{color:var(--rose)}.warn{color:var(--gold)}
+
+.badge{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:.3px}
+.badge-MULTIBAGGER{background:var(--acid-d);color:var(--acid);border:1px solid rgba(0,255,163,.25)}
+.badge-ELITE{background:var(--sky-d);color:var(--sky);border:1px solid rgba(61,158,255,.25)}
+.badge-STRONG{background:var(--gold-d);color:var(--gold);border:1px solid rgba(255,183,0,.25)}
+.badge-WATCHLIST{background:var(--bg3);color:var(--t3);border:1px solid var(--wire)}
+.rule{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:8px;font-weight:600;padding:2px 6px;border-radius:3px;margin:1px}
+.rule.pass{background:var(--acid-d);color:var(--acid)}
+.rule.fail{background:var(--bg3);color:var(--t3)}
+.rule.fail::before{content:'✕';color:var(--rose)}
+.rule.pass::before{content:'✓'}
+
+.sc-bar{display:inline-block;width:46px;height:3px;background:var(--bg0);border-radius:2px;overflow:hidden;vertical-align:middle;margin-right:6px}
+.sc-fill{height:100%;border-radius:2px}
+.btn{padding:8px 18px;border-radius:20px;background:linear-gradient(135deg,var(--acid) 0%,#00cc85 100%);color:var(--bg0);font-family:var(--mono);font-size:10px;font-weight:700;border:none;cursor:pointer;transition:all .2s}
+.btn:hover{box-shadow:var(--acid-g);transform:translateY(-1px)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-ghost{padding:7px 14px;border-radius:8px;border:1px solid var(--wire2);background:transparent;color:var(--t2);font-family:var(--mono);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-ghost:hover{background:var(--bg3);color:var(--t1);border-color:var(--wire3)}
+.btn-danger{padding:4px 10px;border-radius:6px;border:1px solid rgba(255,48,96,.3);background:transparent;color:var(--rose);font-family:var(--mono);font-size:9px;cursor:pointer}
+.btn-danger:hover{background:var(--rose-d)}
+
+input,select{background:var(--bg3);border:1px solid var(--wire2);color:var(--t0);border-radius:8px;font-family:var(--mono);font-size:10px;padding:7px 10px;outline:none;transition:border .15s}
+input:focus,select:focus{border-color:var(--acid);box-shadow:0 0 0 3px var(--acid-d)}
+input::placeholder{color:var(--t3)}
+label{font-family:var(--mono);font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;display:flex;flex-direction:column;gap:5px}
+.filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.filter-row>label{min-width:110px;flex:1}
+
+.stat{display:flex;flex-direction:column;gap:4px}
+.stat-val{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--t0)}
+.stat-key{font-family:var(--mono);font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:1px}
+.stat-val.acid{color:var(--acid)}.stat-val.rose{color:var(--rose)}.stat-val.gold{color:var(--gold)}
+
+.alloc{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--wire);font-family:var(--mono);font-size:10px;font-weight:600}
+.alloc>div{display:flex;align-items:center;justify-content:center}
+.alloc .eq{background:linear-gradient(135deg,rgba(0,255,163,.25),rgba(0,204,133,.12));color:var(--acid)}
+.alloc .cs{background:rgba(255,255,255,.05);color:var(--t2)}
+
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:40px 20px;text-align:center}
+.empty-icon{font-size:30px;opacity:.35}
+.empty-txt{font-family:var(--mono);font-size:11px;color:var(--t3)}
+.loading-dot{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--acid);animation:pulse 1.4s ease-in-out infinite}
+.loading-dot:nth-child(2){animation-delay:.2s}.loading-dot:nth-child(3){animation-delay:.4s}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.3)}}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.anim{animation:rise .3s ease both}
+.note{font-family:var(--mono);font-size:9px;color:var(--t3);line-height:1.6}
+.status-line{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--t2)}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--acid);box-shadow:0 0 8px var(--acid);animation:pulse 1.2s infinite}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const {useState, useEffect, useCallback, useMemo, useRef} = React;
+const {LineChart,Line,XAxis,YAxis,Tooltip,ResponsiveContainer,ReferenceDot,Legend} = Recharts;
+
+const API = '';
+const SCORE_COLOR = s => s >= 75 ? '#00ffa3' : s >= 55 ? '#ffb700' : '#ff3060';
+const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString('en-IN',{maximumFractionDigits:d});
+const pct = v => v == null || isNaN(v) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%';
+const fmtCr = v => v == null || isNaN(v) ? '—' : '₹' + Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}) + ' Cr';
+const fmtRs = v => v == null || isNaN(v) ? '—' : '₹' + Number(v).toLocaleString('en-IN',{maximumFractionDigits:2});
+
+async function j(url, opts) {
+  const r = await fetch(API + url, opts);
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `${r.status}`);
+  return r.json();
+}
+
+function ScoreCell({score}){
+  const c = SCORE_COLOR(score);
+  return <span><span className="sc-bar"><span className="sc-fill" style={{width:(score||0)+'%',background:c,display:'block'}}/></span><span style={{fontFamily:'var(--mono)',fontWeight:600,color:c}}>{fmt(score,0)}</span></span>;
+}
+function Bucket({b}){ return b ? <span className={`badge badge-${b}`}>{b}</span> : null; }
+function Loader(){ return <div style={{display:'flex',gap:4,padding:'20px 0',justifyContent:'center'}}><span className="loading-dot"/><span className="loading-dot"/><span className="loading-dot"/></div>; }
+function Empty({icon,text,children}){ return <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-txt">{text}</div>{children}</div>; }
+
+/* ── NAV ─────────────────────────────────────────────────────────────── */
+function Nav({tab,setTab,regime}){
+  const tabs = ['Dashboard','Screener','Elite Picks','Portfolio','Backtest'];
+  const vix = regime && regime.vix;
+  const vixClass = !vix ? 'warn' : vix >= 25 ? 'risk' : vix >= 20 ? 'warn' : 'safe';
+  return (
+    <nav className="nav">
+      <div className="nav-brand">
+        <div className="nav-sigma">Σ</div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v7 · Single User</div></div>
+      </div>
+      <div className="nav-tabs">
+        {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
+      </div>
+      <div className="nav-right">
+        {regime && regime.regime && <span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span>}
+        {vix != null && <div className="vix-pill"><div className={`vix-dot ${vixClass}`}/><span style={{color:'var(--t3)',fontSize:'8px'}}>VIX</span><span style={{color:'var(--gold)',fontWeight:600}}>{Number(vix).toFixed(1)}</span></div>}
+      </div>
+    </nav>
+  );
+}
+
+/* ── DASHBOARD ───────────────────────────────────────────────────────── */
+function Dashboard(){
+  const [data,setData] = useState(null);
+  const [err,setErr] = useState(null);
+  const [scanning,setScanning] = useState(false);
+  const [scanResult,setScanResult] = useState(null);
+  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); },[]);
+  useEffect(load,[load]);
+
+  const runScan = async (force)=>{
+    setScanning(true); setScanResult(null);
+    try { const r = await j('/api/scan' + (force ? '?force=true' : ''), {method:'POST'}); setScanResult(r); load(); }
+    catch(e){ setScanResult({error:e.message}); }
+    finally { setScanning(false); }
+  };
+
+  if (err && !data) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
+  if (!data) return <Loader/>;
+  const {regime, allocation, top_picks, universe_size, scored, last_scan_at} = data;
+
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Market Dashboard</div><div className="screen-sub">Regime · Allocation · Top Picks</div></div>
+
+      <div className="grid2">
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Market Regime</span><span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span></div>
+          <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{fmt(regime.nifty,0)}</span><span className="stat-key">NIFTY 50</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{fmt(regime.nifty_200dma,0)}</span><span className="stat-key">200-DMA {regime.above_200dma ? '· above ✓' : '· below ✗'}</span></div>
+            <div className="stat"><span className="stat-val gold" style={{fontSize:18}}>{regime.vix != null ? Number(regime.vix).toFixed(1) : '—'}</span><span className="stat-key">India VIX</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{regime.adx != null ? Number(regime.adx).toFixed(1) : '—'}</span><span className="stat-key">ADX</span></div>
+          </div>
+          <div className="note" style={{marginTop:12}}>{regime.reason}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Suggested Cash Allocation</span></div>
+          <div className="alloc">
+            <div className="eq" style={{width:allocation.equity+'%'}}>EQUITY {allocation.equity}%</div>
+            <div className="cs" style={{width:allocation.cash+'%'}}>CASH {allocation.cash}%</div>
+          </div>
+          <div className="note" style={{marginTop:12}}>{allocation.note}</div>
+          <div className="status-line" style={{marginTop:14}}>
+            <span className="pulse-dot"/> {scored} of {universe_size} stocks scored {last_scan_at ? '· last scan ' + new Date(last_scan_at).toLocaleString() : '· no scan yet'}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-hdr">
+          <span className="card-title">Top Picks</span>
+          <div style={{display:'flex',gap:8}}>
+            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false)}>{scanning ? 'Scanning…' : '⟳ Run Scan'}</button>
+            <button className="btn" disabled={scanning} onClick={()=>runScan(true)}>{scanning ? 'Scanning…' : '⚡ Scan (force refresh)'}</button>
+          </div>
+        </div>
+        {scanResult && (
+          <div className="note" style={{marginBottom:10}}>
+            {scanResult.error ? `Scan failed: ${scanResult.error}` :
+              `✓ ${scanResult.scored}/${scanResult.scanned} scored in ${scanResult.duration_sec}s · ${scanResult.fundamentals} fundamentals · regime ${scanResult.regime}`}
+          </div>
+        )}
+        {top_picks.length === 0 ? (
+          <Empty icon="📡" text="No scan data yet — run a scan to populate the dashboard."><button className="btn" onClick={()=>runScan(false)}>Run first scan</button></Empty>
+        ) : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th>Bucket</th><th className="num">Price</th><th className="num">Day %</th><th className="num">Score</th></tr></thead>
+              <tbody>
+                {top_picks.map((p,i)=>(
+                  <tr key={p.symbol}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{p.symbol.replace('.NS','')}</span></td>
+                    <td style={{color:'var(--t2)'}}>{p.sector}</td>
+                    <td><Bucket b={p.mb_bucket}/></td>
+                    <td className="num">{fmtRs(p.price)}</td>
+                    <td className={`num ${p.change_pct >= 0 ? 'up' : 'dn'}`}>{pct(p.change_pct)}</td>
+                    <td className="num"><ScoreCell score={p.score}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── SCREENER ────────────────────────────────────────────────────────── */
+function Screener(){
+  const [rows,setRows] = useState(null);
+  const [err,setErr] = useState(null);
+  const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',bucket:'',sort:'score'});
+  const [loading,setLoading] = useState(false);
+
+  const load = useCallback(()=>{
+    setLoading(true);
+    const q = new URLSearchParams();
+    if (f.min_score) q.set('min_score', f.min_score);
+    if (f.min_roe) q.set('min_roe', f.min_roe);
+    if (f.min_roce) q.set('min_roce', f.min_roce);
+    if (f.min_growth) q.set('min_growth', f.min_growth);
+    if (f.max_pe) q.set('max_pe', f.max_pe);
+    if (f.bucket) q.set('bucket', f.bucket);
+    q.set('sort', f.sort);
+    j('/api/scores?'+q.toString()).then(setRows).catch(e=>setErr(e.message)).finally(()=>setLoading(false));
+  },[f]);
+  useEffect(load,[load]);
+
+  const set = k => e => setF({...f,[k]:e.target.value});
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Screener</div><div className="screen-sub">Filter the universe by fundamentals</div></div>
+      <div className="card">
+        <div className="filter-row">
+          <label>Min Score<input type="number" placeholder="0" value={f.min_score} onChange={set('min_score')}/></label>
+          <label>Min ROE %<input type="number" placeholder="0" value={f.min_roe} onChange={set('min_roe')}/></label>
+          <label>Min ROCE %<input type="number" placeholder="0" value={f.min_roce} onChange={set('min_roce')}/></label>
+          <label>Min Growth %<input type="number" placeholder="0" value={f.min_growth} onChange={set('min_growth')}/></label>
+          <label>Max PE<input type="number" placeholder="∞" value={f.max_pe} onChange={set('max_pe')}/></label>
+          <label>Bucket
+            <select value={f.bucket} onChange={set('bucket')}>
+              <option value="">All</option>
+              <option value="MULTIBAGGER">Multibagger</option>
+              <option value="ELITE">Elite</option>
+              <option value="STRONG">Strong</option>
+              <option value="WATCHLIST">Watchlist</option>
+            </select>
+          </label>
+          <label>Sort
+            <select value={f.sort} onChange={set('sort')}>
+              <option value="score">Score</option><option value="roe">ROE</option><option value="growth">Growth</option><option value="pe">PE</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div className="card">
+        {err && <Empty icon="⚠️" text={err}/>}
+        {!err && !rows && <Loader/>}
+        {rows && rows.length === 0 && <Empty icon="🔍" text="No stocks match these filters."/>}
+        {rows && rows.length > 0 && (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Rank</th><th>Symbol</th><th>Sector</th><th className="num">Score</th><th>Bucket</th>
+                <th className="num">ROE %</th><th className="num">ROCE %</th><th className="num">Growth %</th>
+                <th className="num">PE</th><th className="num">Mkt Cap</th><th className="num">Trend</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(r=>(
+                  <tr key={r.symbol}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
+                    <td style={{color:'var(--t2)'}}>{r.sector || '—'}</td>
+                    <td className="num"><ScoreCell score={r.score}/></td>
+                    <td><Bucket b={r.mb_bucket}/></td>
+                    <td className="num">{fmt(r.roe,1)}</td>
+                    <td className="num">{fmt(r.roce,1)}</td>
+                    <td className={`num ${r.sales_growth > 0 ? 'up' : 'dn'}`}>{fmt(r.sales_growth,1)}</td>
+                    <td className="num">{fmt(r.pe,1)}</td>
+                    <td className="num">{fmtCr(r.market_cap)}</td>
+                    <td className="num">{r.trend_ok ? <span className="up">✓</span> : <span style={{color:'var(--t3)'}}>—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── ELITE PICKS + MB DETECTOR ───────────────────────────────────────── */
+function ElitePicks(){
+  const [picks,setPicks] = useState(null);
+  const [mbs,setMbs] = useState(null);
+  const [err,setErr] = useState(null);
+  useEffect(()=>{
+    j('/api/picks?limit=20').then(setPicks).catch(e=>setErr(e.message));
+    j('/api/multibaggers').then(setMbs).catch(()=>{});
+  },[]);
+  if (err && !picks) return <Empty icon="⚠️" text={err}/>;
+  if (!picks) return <Loader/>;
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Elite Picks</div><div className="screen-sub">Top 20 by institutional score</div></div>
+      <div className="card">
+        {picks.length === 0 ? <Empty icon="📡" text="Run a scan first."/> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Rank</th><th>Symbol</th><th>Bucket</th>
+                <th className="num">Score</th><th className="num">Quality</th><th className="num">Growth</th>
+                <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th>
+              </tr></thead>
+              <tbody>
+                {picks.map(r=>(
+                  <tr key={r.symbol}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
+                    <td><Bucket b={r.mb_bucket}/></td>
+                    <td className="num"><ScoreCell score={r.score}/></td>
+                    <td className="num">{fmt(r.quality,0)}</td>
+                    <td className="num">{fmt(r.growth,0)}</td>
+                    <td className="num">{fmt(r.momentum,0)}</td>
+                    <td className="num">{fmt(r.valuation,0)}</td>
+                    <td className="num">{fmt(r.risk,0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">100-Bagger Detector</span><span className="note">{mbs ? `${mbs.length} candidates` : ''}</span></div>
+        {!mbs ? <Loader/> : mbs.length === 0 ? <Empty icon="💎" text="No candidates yet — run a scan first."/> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Rules</th>
+                <th className="num">Growth</th><th className="num">Quality</th><th className="num">Momentum</th>
+                <th className="num">Mkt Cap</th>
+              </tr></thead>
+              <tbody>
+                {mbs.slice(0,30).map(r=>(
+                  <tr key={r.symbol}>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
+                    <td className="num"><ScoreCell score={r.mb_score}/></td>
+                    <td><Bucket b={r.mb_bucket}/></td>
+                    <td style={{fontFamily:'var(--mono)',fontSize:9}}>
+                      {(r.mb_checklist||[]).map(c=>(
+                        <span key={c.code} className={`rule ${c.pass?'pass':'fail'}`} title={c.label}>{c.code}</span>
+                      ))}
+                    </td>
+                    <td className="num">{fmt(r.growth,0)}</td>
+                    <td className="num">{fmt(r.quality,0)}</td>
+                    <td className="num">{fmt(r.momentum,0)}</td>
+                    <td className="num">{fmtCr(r.market_cap)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── PORTFOLIO ───────────────────────────────────────────────────────── */
+const HOLDINGS_KEY = 'sovereign-lite-holdings';
+function Portfolio(){
+  const [holdings,setHoldings] = useState(()=>{ try { return JSON.parse(localStorage.getItem(HOLDINGS_KEY)||'[]'); } catch { return []; } });
+  const [quotes,setQuotes] = useState({});
+  const [universe,setUniverse] = useState([]);
+  const [newSym,setNewSym] = useState('');
+  const [qty,setQty] = useState('');
+  const [avg,setAvg] = useState('');
+  const [err,setErr] = useState(null);
+
+  useEffect(()=>{ localStorage.setItem(HOLDINGS_KEY, JSON.stringify(holdings)); },[holdings]);
+  useEffect(()=>{ j('/api/universe').then(u=>setUniverse(u.map(x=>x.symbol))).catch(()=>{}); },[]);
+  useEffect(()=>{
+    if (!holdings.length) { setQuotes({}); return; }
+    let live = true;
+    (async()=>{
+      const q = {};
+      for (const h of holdings) {
+        try { q[h.symbol] = await j('/api/quote/'+encodeURIComponent(h.symbol)); } catch { q[h.symbol] = null; }
+      }
+      if (live) setQuotes(q);
+    })();
+    return ()=>{ live = false; };
+  },[holdings]);
+
+  const add = (e)=>{
+    e.preventDefault();
+    let sym = newSym.trim().toUpperCase();
+    if (!sym) return;
+    if (!sym.endsWith('.NS') && !sym.endsWith('.BO')) sym += '.NS';
+    const q = parseFloat(qty), a = parseFloat(avg);
+    if (!q || q <= 0 || !a || a <= 0) return;
+    setHoldings(h => [...h.filter(x=>x.symbol!==sym), {symbol:sym, qty:q, avg:a}]);
+    setNewSym(''); setQty(''); setAvg('');
+  };
+  const remove = sym => setHoldings(h=>h.filter(x=>x.symbol!==sym));
+
+  const rows = holdings.map(h=>{
+    const q = quotes[h.symbol] || {};
+    const ltp = q.price;
+    const mv = ltp ? ltp*h.qty : null;
+    const cost = h.avg*h.qty;
+    const pnl = mv != null ? mv - cost : null;
+    const pnlPct = pnl != null && cost ? pnl/cost*100 : null;
+    return {...h, ltp, mv, cost, pnl, pnlPct, chg: q.change_pct};
+  });
+  const totCost = rows.reduce((s,r)=>s+r.cost,0);
+  const totMv = rows.reduce((s,r)=>s+(r.mv||0),0);
+  const totPnl = totMv - totCost;
+  const totPct = totCost ? totPnl/totCost*100 : 0;
+
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Portfolio</div><div className="screen-sub">Holdings · P&L · risk snapshot (stored locally)</div></div>
+
+      <div className="grid3">
+        <div className="card"><div className="stat"><span className="stat-val">{fmtRs(totMv)}</span><span className="stat-key">Market Value</span></div></div>
+        <div className="card"><div className="stat"><span className={`stat-val ${totPnl>=0?'acid':'rose'}`}>{fmtRs(totPnl)} <span style={{fontSize:12}}>({pct(totPct)})</span></span><span className="stat-key">Total P&L</span></div></div>
+        <div className="card"><div className="stat"><span className="stat-val">{rows.length}</span><span className="stat-key">Holdings</span></div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Add Holding</span></div>
+        <form className="filter-row" onSubmit={add}>
+          <label>Symbol
+            <input list="universe-syms" placeholder="RELIANCE.NS" value={newSym} onChange={e=>setNewSym(e.target.value)}/>
+            <datalist id="universe-syms">{universe.map(s=><option key={s} value={s}/>)}</datalist>
+          </label>
+          <label>Qty<input type="number" min="1" placeholder="10" value={qty} onChange={e=>setQty(e.target.value)}/></label>
+          <label>Avg Price (₹)<input type="number" min="0.01" placeholder="2500" value={avg} onChange={e=>setAvg(e.target.value)}/></label>
+          <button className="btn" type="submit">Add</button>
+        </form>
+        {err && <div className="note" style={{color:'var(--rose)',marginTop:8}}>{err}</div>}
+      </div>
+
+      <div className="card">
+        {rows.length === 0 ? <Empty icon="💼" text="No holdings yet — add your first position above."/> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Symbol</th><th className="num">Qty</th><th className="num">Avg Cost</th><th className="num">LTP</th>
+                <th className="num">Day %</th><th className="num">Cost</th><th className="num">Market Value</th>
+                <th className="num">P&L</th><th className="num">P&L %</th><th></th>
+              </tr></thead>
+              <tbody>
+                {rows.map(r=>(
+                  <tr key={r.symbol}>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
+                    <td className="num">{r.qty}</td>
+                    <td className="num">{fmtRs(r.avg)}</td>
+                    <td className="num">{fmtRs(r.ltp)}</td>
+                    <td className={`num ${r.chg>=0?'up':'dn'}`}>{r.chg!=null ? pct(r.chg) : '—'}</td>
+                    <td className="num">{fmtRs(r.cost)}</td>
+                    <td className="num">{fmtRs(r.mv)}</td>
+                    <td className={`num ${r.pnl>=0?'up':'dn'}`}>{fmtRs(r.pnl)}</td>
+                    <td className={`num ${r.pnlPct>=0?'up':'dn'}`}>{pct(r.pnlPct)}</td>
+                    <td><button className="btn-danger" onClick={()=>remove(r.symbol)}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{background:'var(--bg3)'}}>
+                  <td colSpan="5" style={{fontWeight:600,color:'var(--t0)'}}>Total</td>
+                  <td className="num" style={{color:'var(--t0)'}}>{fmtRs(totCost)}</td>
+                  <td className="num" style={{color:'var(--t0)'}}>{fmtRs(totMv)}</td>
+                  <td className={`num ${totPnl>=0?'up':'dn'}`} style={{fontWeight:700}}>{fmtRs(totPnl)}</td>
+                  <td className={`num ${totPnl>=0?'up':'dn'}`} style={{fontWeight:700}}>{pct(totPct)}</td>
+                  <td/>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── BACKTEST ─────────────────────────────────────────────────────────── */
+function Backtest(){
+  const [params,setParams] = useState({years:'3', top_n:'10', initial:'1000000', stop:'0.20'});
+  const [result,setResult] = useState(null);
+  const [runs,setRuns] = useState([]);
+  const [running,setRunning] = useState(false);
+  const [err,setErr] = useState(null);
+
+  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); },[]);
+
+  const run = async ()=>{
+    setRunning(true); setErr(null); setResult(null);
+    try {
+      const r = await j('/api/backtest', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({years:parseInt(params.years)||3, top_n:parseInt(params.top_n)||10,
+          initial_capital:parseFloat(params.initial)||1000000, trailing_stop_pct:parseFloat(params.stop)||0.2})});
+      setResult(r);
+      j('/api/backtests?limit=5').then(setRuns).catch(()=>{});
+    } catch(e){ setErr(e.detail || e.message); }
+    finally { setRunning(false); }
+  };
+  const set = k => e => setParams({...params,[k]:e.target.value});
+  const s = result ? result.summary : null;
+
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Backtest</div><div className="screen-sub">Momentum + trend strategy · monthly rebalance · trailing stop</div></div>
+
+      <div className="card">
+        <div className="filter-row">
+          <label>Years<input type="number" min="1" max="10" value={params.years} onChange={set('years')}/></label>
+          <label>Top N per month<input type="number" min="1" max="30" value={params.top_n} onChange={set('top_n')}/></label>
+          <label>Initial Capital (₹)<input type="number" value={params.initial} onChange={set('initial')}/></label>
+          <label>Trailing Stop %<input type="number" step="0.05" value={params.stop} onChange={set('stop')}/></label>
+          <button className="btn" disabled={running} onClick={run}>{running ? 'Running…' : '▶ Run Backtest'}</button>
+        </div>
+        {err && <div className="note" style={{color:'var(--rose)',marginTop:10}}>{err}</div>}
+      </div>
+
+      {result && s && !s.error && (
+        <>
+          <div className="grid3">
+            <div className="card"><div className="stat"><span className={`stat-val ${s.cagr_pct>=0?'acid':'rose'}`}>{pct(s.cagr_pct)}</span><span className="stat-key">CAGR</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val rose">{Number(s.max_drawdown_pct).toFixed(1)}%</span><span className="stat-key">Max Drawdown</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val gold">{Number(s.sharpe).toFixed(2)}</span><span className="stat-key">Sharpe</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val">{s.win_rate_pct != null ? s.win_rate_pct+'%' : '—'}</span><span className="stat-key">Win Rate</span></div></div>
+            <div className="card"><div className="stat"><span className={`stat-val ${s.net_return_pct>=0?'acid':'rose'}`}>{pct(s.net_return_pct)}</span><span className="stat-key">Net Return</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val">{fmtRs(s.final_value)}</span><span className="stat-key">Final Value</span></div></div>
+          </div>
+
+          <div className="card">
+            <div className="card-hdr"><span className="card-title">Equity Curve</span></div>
+            {result.equity_curve.length > 2 ? (
+              <div style={{height:280}}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={result.equity_curve} margin={{top:8,right:8,bottom:0,left:8}}>
+                    <XAxis dataKey="date" tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} minTickGap={40}/>
+                    <YAxis domain={['auto','auto']} tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} width={70} tickFormatter={v=>v>=100000?'₹'+(v/100000).toFixed(0)+'L':'₹'+v}/>
+                    <Tooltip contentStyle={{backgroundColor:'#0c1120',borderColor:'#161f30',borderRadius:8,fontSize:10,fontFamily:'Geist Mono'}}
+                      formatter={v=>['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Equity']}/>
+                    <Line type="monotone" dataKey="equity" stroke="#00ffa3" strokeWidth={1.8} dot={false}/>
+                    <ReferenceDot x={result.equity_curve[0].date} y={s.initial_capital} r={2} fill="#ffb700"/>
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <Empty icon="📈" text="Equity curve needs more history — run a scan with ≥2y of prices."/>}
+          </div>
+
+          <div className="card">
+            <div className="card-hdr"><span className="card-title">Trades ({result.trades.length})</span></div>
+            {result.trades.length === 0 ? <Empty icon="🔄" text="No trades executed in this window."/> : (
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Symbol</th><th>Entry Date</th><th>Exit Date</th><th className="num">Entry</th><th className="num">Exit</th><th className="num">Return</th><th>Exit</th></tr></thead>
+                  <tbody>
+                    {result.trades.slice(-40).reverse().map((t,i)=>(
+                      <tr key={i}>
+                        <td style={{color:'var(--t0)',fontWeight:600}}>{t.symbol.replace('.NS','')}</td>
+                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{t.entry_date}</td>
+                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{t.exit_date}</td>
+                        <td className="num">{fmtRs(t.entry_price)}</td>
+                        <td className="num">{fmtRs(t.exit_price)}</td>
+                        <td className={`num ${t.return_pct>=0?'up':'dn'}`}>{pct(t.return_pct)}</td>
+                        <td><span className={`badge badge-${t.reason==='trailing_stop'?'STRONG':t.reason==='sma50_break'?'WATCHLIST':'ELITE'}`}>{t.reason}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {runs.length > 0 && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Recent Runs</span></div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Run</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Trades</th><th>Params</th></tr></thead>
+              <tbody>
+                {runs.map(r=>(
+                  <tr key={r.id} style={{cursor:'pointer'}} onClick={()=>setResult(r)}>
+                    <td style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>#{r.id}</td>
+                    <td className={`num ${r.summary.cagr_pct>=0?'up':'dn'}`}>{r.summary.cagr_pct!=null ? pct(r.summary.cagr_pct) : '—'}</td>
+                    <td className="num rose">{r.summary.max_drawdown_pct!=null ? r.summary.max_drawdown_pct+'%' : '—'}</td>
+                    <td className="num gold">{r.summary.sharpe!=null ? r.summary.sharpe : '—'}</td>
+                    <td className="num">{r.summary.trades!=null ? r.summary.trades : '—'}</td>
+                    <td style={{fontFamily:'var(--mono)',color:'var(--t3)',fontSize:9}}>{r.params ? `${r.params.years}y top${r.params.top_n} stop${r.params.trailing_stop_pct}` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── APP ──────────────────────────────────────────────────────────────── */
+function App(){
+  const [tab,setTab] = useState('Dashboard');
+  const [regime,setRegime] = useState(null);
+  useEffect(()=>{ j('/api/regime').then(setRegime).catch(()=>{}); },[]);
+  return (
+    <>
+      <Nav tab={tab} setTab={setTab} regime={regime}/>
+      <div className="body">
+        {tab==='Dashboard' && <Dashboard/>}
+        {tab==='Screener' && <Screener/>}
+        {tab==='Elite Picks' && <ElitePicks/>}
+        {tab==='Portfolio' && <Portfolio/>}
+        {tab==='Backtest' && <Backtest/>}
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
