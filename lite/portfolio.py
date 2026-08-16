@@ -1,5 +1,5 @@
 """
-Sovereign Lite v8 — portfolio construction layer.
+Sovereign Lite v10 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
 (higher = better). Allocation weights are conviction-based: the #1 position
@@ -132,6 +132,76 @@ def factor_exposure(alloc: list[dict], records_by_symbol: dict[str, dict]) -> di
         out["top_factor"] = top
         out["top_factor_share"] = round(comp[top] / sum(comp.values()) * 100, 1)
     return out
+
+
+def portfolio_risk(alloc: list[dict], records_by_symbol: dict[str, dict],
+                   equity_pct: float) -> dict:
+    """Portfolio-level risk readout: weighted vol, drawdown, concentration.
+
+    Vol and max drawdown come from each name's stored per-stock metrics (now
+    persisted with every scan), so the numbers reflect the actual book.
+    `portfolio_vol` applies a diversification discount: a 10-name book with
+    40% average vol does not swing like one name at 40% — effective N
+    (1 / HHI) scales the average down, a standard equal-risk approximation
+    that needs no covariance matrix.
+    """
+    n = len(alloc)
+    if n == 0:
+        return {"n": 0, "risk_grade": None}
+    total = sum(a["weight_pct"] for a in alloc) or 1.0
+    share = [a["weight_pct"] / total for a in alloc]
+    hhi = round(sum(s * s for s in share), 3)
+
+    def wavg(key: str):
+        num = den = 0.0
+        for a, s in zip(alloc, share):
+            v = (records_by_symbol.get(a["symbol"]) or {}).get(key)
+            if v is None:
+                continue
+            num += v * s
+            den += s
+        return (num / den) if den > 0 else None
+
+    avg_vol = wavg("vol")
+    avg_dd = wavg("max_dd")
+    avg_quality = wavg("quality")
+    avg_conf = wavg("data_confidence")
+
+    eff_n = round(1.0 / hhi, 1) if hhi > 0 else float(n)
+    port_vol = None
+    if avg_vol is not None and avg_vol > 0 and eff_n > 0:
+        port_vol = round(avg_vol / (eff_n ** 0.5), 4)
+
+    top = sorted(share, reverse=True)
+    top1 = round(top[0] * 100, 1) if top else 0.0
+    top3 = round(sum(top[:3]) * 100, 1)
+
+    grade = "BALANCED"
+    if port_vol is not None and avg_dd is not None:
+        if port_vol < 0.18 and avg_dd > -0.35:
+            grade = "CONSERVATIVE"
+        elif port_vol < 0.30 and avg_dd > -0.50:
+            grade = "BALANCED"
+        else:
+            grade = "AGGRESSIVE"
+    elif port_vol is not None:
+        grade = "CONSERVATIVE" if port_vol < 0.18 else ("BALANCED" if port_vol < 0.30 else "AGGRESSIVE")
+
+    return {
+        "n": n,
+        "equity_pct": round(equity_pct, 1),
+        "cash_pct": round(max(0.0, 100 - equity_pct), 1),
+        "avg_vol": round(avg_vol * 100, 1) if avg_vol is not None else None,
+        "portfolio_vol": round(port_vol * 100, 1) if port_vol is not None else None,
+        "avg_max_dd": round(avg_dd * 100, 1) if avg_dd is not None else None,
+        "effective_n": eff_n,
+        "hhi": hhi,
+        "top1_share": top1,
+        "top3_share": top3,
+        "avg_quality": round(avg_quality, 1) if avg_quality is not None else None,
+        "avg_confidence": round(avg_conf, 1) if avg_conf is not None else None,
+        "risk_grade": grade,
+    }
 
 
 def build_allocation(

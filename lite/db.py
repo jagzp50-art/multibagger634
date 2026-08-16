@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS scores (
     institutional_quality REAL,
     revision_score REAL,
     compounder_score REAL,
+    reinvestment_score REAL,
+    vol          REAL,
+    max_dd       REAL,
     data_confidence REAL,
     factor_contributions TEXT,
     updated_at TEXT
@@ -306,6 +309,8 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "data_confidence",
                 "factor_contributions",
                 "reinvestment_score",
+                "vol",
+                "max_dd",
             ],
         )
         _migrate_columns(
@@ -547,9 +552,9 @@ def upsert_scores(records: Iterable[dict]) -> None:
              mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_1m, rs_3m,
              rs_6m, rs_12m, rs_boost, accumulation, pos_score, opp_score, sector_boost,
              trend_ok, institutional_quality, revision_score, compounder_score,
-             reinvestment_score, data_confidence, factor_contributions, updated_at)
+             reinvestment_score, vol, max_dd, data_confidence, factor_contributions, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -580,6 +585,8 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     _num(r.get("revision_score")),
                     _num(r.get("compounder_score")),
                     _num(r.get("reinvestment_score")),
+                    _num(r.get("vol")),
+                    _num(r.get("max_dd")),
                     _num(r.get("data_confidence")),
                     json.dumps(r.get("factor_contributions") or {}),
                     datetime.now().isoformat(timespec="seconds"),

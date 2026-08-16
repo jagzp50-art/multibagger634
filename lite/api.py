@@ -142,6 +142,14 @@ def create_app() -> FastAPI:
             watch_events = _recent_watchlist(limit=8)
         except Exception:
             watch_events = []
+        try:
+            risk_rows = portfolio.attach_position_scores(_merge(scores, fundas))
+            risk_equity = float(regime.get("allocation", {}).get("equity", 60))
+            risk_alloc = portfolio.build_allocation(risk_rows, risk_equity, top_n=8)
+            risk_records = {r["symbol"]: r for r in risk_rows}
+            portfolio_risk = portfolio.portfolio_risk(risk_alloc, risk_records, risk_equity)
+        except Exception:
+            portfolio_risk = {"n": 0, "risk_grade": None}
         return _json_safe(
             {
                 "regime": regime,
@@ -152,6 +160,7 @@ def create_app() -> FastAPI:
                 "universe_size": len(db.universe_symbols()),
                 "universe_tiers": db.universe_tiers(),
                 "scored": len(scores),
+                "portfolio_risk": portfolio_risk,
                 "last_scan_at": last_scan.get("updated_at") if last_scan else None,
                 "last_scan_regime": last_scan.get("regime") if last_scan else None,
             }
@@ -277,6 +286,7 @@ def create_app() -> FastAPI:
                 "max_sector_weight": max_sector_weight,
                 "sector_weights": portfolio.sector_weights(alloc),
                 "factor_exposure": portfolio.factor_exposure(alloc, records_by_symbol),
+                "portfolio_risk": portfolio.portfolio_risk(alloc, records_by_symbol, equity_pct),
             }
         )
 

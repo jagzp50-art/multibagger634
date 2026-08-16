@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v8</title>
+<title>Sovereign Lite v10</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -176,7 +176,7 @@ function Nav({tab,setTab,regime}){
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v8 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v10 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -208,7 +208,7 @@ function Dashboard(){
 
   if (err && !data) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
   if (!data) return <Loader/>;
-  const {regime, allocation, top_picks, universe_size, universe_tiers, scored, last_scan_at} = data;
+  const {regime, allocation, top_picks, universe_size, universe_tiers, scored, last_scan_at, portfolio_risk} = data;
 
   return (
     <div className="wrap anim">
@@ -237,6 +237,20 @@ function Dashboard(){
             <span className="pulse-dot"/> {scored} of {universe_size} stocks scored · {universe_tiers ? `core ${universe_tiers.core || 0} · discovery ${universe_tiers.discovery || 0}` : ''} {last_scan_at ? '· last scan ' + new Date(last_scan_at).toLocaleString() : '· no scan yet'}
           </div>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Portfolio Risk</span><span className="note">top-8 Kelly-Lite book · diversification-adjusted</span></div>
+        {!portfolio_risk || !portfolio_risk.n ? <div className="note">Run a scan to build the risk readout.</div> : (
+          <div style={{display:'flex',gap:26,flexWrap:'wrap',alignItems:'center'}}>
+            <div className="stat"><span className={`stat-val ${portfolio_risk.risk_grade==='CONSERVATIVE'?'acid':portfolio_risk.risk_grade==='BALANCED'?'gold':'rose'}`} style={{fontSize:18}}>{portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.portfolio_vol!=null ? portfolio_risk.portfolio_vol+'%' : '—'}</span><span className="stat-key">Portfolio Vol (est.)</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.avg_max_dd!=null ? portfolio_risk.avg_max_dd+'%' : '—'}</span><span className="stat-key">Weighted Max DD</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.top1_share!=null ? portfolio_risk.top1_share+'%' : '—'}</span><span className="stat-key">Top-1 Weight</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
+          </div>
+        )}
       </div>
 
       <div className="grid2">
@@ -647,6 +661,27 @@ function Portfolio(){
               </div>
             </div>
             <div className="note" style={{marginTop:8}}>Regime {alloc.regime} · {alloc.equity_pct}% equity deployment · Kelly-Lite 2.0 (score × quality ÷ volatility × drawdown-penalty) with {alloc.max_sector_weight != null ? alloc.max_sector_weight : 25}% sector cap.</div>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Portfolio Risk</span><span className="note">weighted book risk · diversification-adjusted</span></div>
+        {!alloc || !alloc.portfolio_risk || !alloc.portfolio_risk.n ? <div className="note">Run a scan first.</div> : (
+          <div>
+            <div style={{display:'flex',gap:28,flexWrap:'wrap',alignItems:'center'}}>
+              <div className="stat"><span className={`stat-val ${alloc.portfolio_risk.risk_grade==='CONSERVATIVE'?'acid':alloc.portfolio_risk.risk_grade==='BALANCED'?'gold':'rose'}`} style={{fontSize:22}}>{alloc.portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.portfolio_vol!=null ? alloc.portfolio_risk.portfolio_vol+'%' : '—'}</span><span className="stat-key">Portfolio Vol (est.)</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.avg_vol!=null ? alloc.portfolio_risk.avg_vol+'%' : '—'}</span><span className="stat-key">Avg Stock Vol</span></div>
+              <div className="stat"><span className={`stat-val ${alloc.portfolio_risk.avg_max_dd!=null && alloc.portfolio_risk.avg_max_dd > -30 ? 'acid' : alloc.portfolio_risk.avg_max_dd!=null && alloc.portfolio_risk.avg_max_dd > -45 ? 'gold' : 'rose'}`}>{alloc.portfolio_risk.avg_max_dd!=null ? alloc.portfolio_risk.avg_max_dd+'%' : '—'}</span><span className="stat-key">Weighted Max Drawdown</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.top1_share}%</span><span className="stat-key">Top-1 Weight</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.top3_share}%</span><span className="stat-key">Top-3 Weight</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.effective_n}</span><span className="stat-key">Effective Names</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.avg_quality!=null ? alloc.portfolio_risk.avg_quality : '—'}</span><span className="stat-key">Avg Quality</span></div>
+              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
+            </div>
+            <div className="note" style={{marginTop:12}}>{alloc.portfolio_risk.risk_grade==='CONSERVATIVE' ? 'Low-vol, diversified book — drawdown protection is the priority.' : alloc.portfolio_risk.risk_grade==='BALANCED' ? 'Moderate risk — volatility and drawdown within normal range.' : 'High-risk book — top names dominate; consider trimming or raising cash.'}</div>
           </div>
         )}
       </div>

@@ -900,3 +900,45 @@ def test_walk_forward_reports_pit_and_universe(tmp_path, monkeypatch):
     for f in res["folds"]:
         assert f["universe_size"] == 2
         assert f["pre_pit"] is True
+
+
+# ── v10: Portfolio Risk readout + vol/max_dd persistence ─────────────────────
+
+def test_portfolio_risk_readout():
+    from lite import portfolio
+    recs = [
+        {"symbol": "A.NS", "pos_score": 90, "quality": 85, "vol": 0.35, "max_dd": -0.45, "data_confidence": 92},
+        {"symbol": "B.NS", "pos_score": 80, "quality": 75, "vol": 0.25, "max_dd": -0.30, "data_confidence": 88},
+        {"symbol": "C.NS", "pos_score": 70, "quality": 65, "vol": 0.20, "max_dd": -0.20, "data_confidence": 80},
+    ]
+    alloc = portfolio.build_allocation(recs, equity_pct=60, top_n=3)
+    r = portfolio.portfolio_risk(alloc, {x["symbol"]: x for x in recs}, 60)
+    assert r["n"] == 3
+    assert r["equity_pct"] == 60.0 and r["cash_pct"] == 40.0
+    assert r["avg_vol"] is not None and r["portfolio_vol"] < r["avg_vol"]  # diversification discount
+    assert r["avg_max_dd"] is not None and r["avg_max_dd"] < 0
+    assert r["hhi"] > 0 and r["top1_share"] >= r["top3_share"] / 3
+    assert r["risk_grade"] in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")
+    # single-name book → HHI ~1 and no diversification discount
+    solo = portfolio.build_allocation([recs[0]], equity_pct=50, top_n=1)
+    rs = portfolio.portfolio_risk(solo, {"A.NS": recs[0]}, 50)
+    assert rs["hhi"] == 1.0
+    assert abs(rs["portfolio_vol"] - rs["avg_vol"]) < 0.5
+
+
+def test_vol_maxdd_persisted(tmp_path, monkeypatch):
+    import lite.db as db_mod
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "vm.db"))
+    db_mod.init_db()
+    db_mod.upsert_scores([
+        {
+            "symbol": "A.NS", "score": 80.0, "quality": 80.0, "growth": 70.0,
+            "momentum": 75.0, "valuation": 60.0, "risk": 72.0, "mb_score": 78.0,
+            "pos_score": 81.0, "opp_score": 77.0, "rs_rank": 85.0, "rank": 1,
+            "regime": "bull", "vol": 0.34, "max_dd": -0.42, "data_confidence": 90.0,
+        }
+    ])
+    rows = db_mod.load_scores()
+    assert len(rows) == 1
+    assert rows[0]["vol"] == pytest.approx(0.34)
+    assert rows[0]["max_dd"] == pytest.approx(-0.42)
