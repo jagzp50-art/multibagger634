@@ -142,8 +142,34 @@ def risk_score(f: dict, px: dict) -> Optional[float]:
     return _weighted([(vol_safety, 0.30), (dd_safety, 0.25), (debt_safety, 0.30), (beta_safety, 0.15)])
 
 
-def ownership_score(f: dict) -> Optional[float]:
-    return sigmoid(f.get("promoter_holding"), 50, 15)
+def accumulation_score(f: dict, px: dict) -> Optional[float]:
+    """Institutional-accumulation proxy from data yFinance actually provides.
+
+    Volume expansion (35%) · market-cap growth via 12M return (35%) ·
+    earnings acceleration (30%). Delivery % isn't in the Yahoo feed for NSE
+    names, so heavy volume + price growth + accelerating earnings stand in
+    for it.
+    """
+    vr = px.get("volume_ratio")
+    vol = sigmoid((vr - 1) * 100, 30, 50) if vr is not None else None
+    ret12 = px.get("ret_12m")
+    mcap_growth = sigmoid(ret12 * 100, 15, 25) if ret12 is not None else None
+    accel = f.get("eps_accel")
+    accel = _clamp(accel, 0, 100) if accel is not None else None
+    return _weighted([(vol, 0.35), (mcap_growth, 0.35), (accel, 0.30)])
+
+
+def rs_boost_for(rs: Optional[float]) -> float:
+    """Explicit relative-strength boost tiers (Minervini/O'Neil style)."""
+    if rs is None:
+        return 0.0
+    if rs >= 95:
+        return 10.0
+    if rs >= 90:
+        return 7.0
+    if rs >= 80:
+        return 4.0
+    return 0.0
 
 
 # ── Price-derived metrics ───────────────────────────────────────────────────
@@ -182,7 +208,7 @@ def score_symbol(symbol: str, f: dict, px: dict, benchmark_ret6: Optional[float]
         "momentum": momentum_score(px, benchmark_ret6),
         "valuation": valuation_score(f),
         "risk": risk_score(f, px),
-        "mb_ownership": ownership_score(f),
+        "accumulation": accumulation_score(f, px),
     }
 
 
@@ -201,15 +227,21 @@ def compute_scores(
         regime.get("_nifty_close", pd.Series(dtype=float)), 126
     )
 
-    # RS rank: percentile of 6M return within this universe
+    # RS rank: percentiles of 6M and 12M returns within this universe,
+    # blended 50/50 (a stock strong in both is a true relative leader).
     ret6_by_symbol: dict[str, Optional[float]] = {}
+    ret12_by_symbol: dict[str, Optional[float]] = {}
     for symbol, df in prices.items():
         row = df.iloc[-1] if len(df) else None
         ret6_by_symbol[symbol] = row.get("ret_6m") if row is not None else None
+        ret12_by_symbol[symbol] = row.get("ret_12m") if row is not None else None
     valid_ret6 = sorted(
         (r for r in ret6_by_symbol.values() if r is not None), reverse=True
     )
-    n_valid = len(valid_ret6)
+    valid_ret12 = sorted(
+        (r for r in ret12_by_symbol.values() if r is not None), reverse=True
+    )
+    n6, n12 = len(valid_ret6), len(valid_ret12)
 
     records = []
     for f in fundamentals:
@@ -218,7 +250,17 @@ def compute_scores(
         if df is None or df.empty:
             continue
         row = df.iloc[-1].to_dict()
-        row["rs_rank_score"] = _rs_rank(ret6_by_symbol.get(symbol), valid_ret6, n_valid)
+        rs_6m = _rs_rank(ret6_by_symbol.get(symbol), valid_ret6, n6)
+        rs_12m = _rs_rank(ret12_by_symbol.get(symbol), valid_ret12, n12)
+        if rs_6m is None and rs_12m is None:
+            rs_rank = None
+        elif rs_6m is None:
+            rs_rank = rs_12m
+        elif rs_12m is None:
+            rs_rank = rs_6m
+        else:
+            rs_rank = 0.5 * rs_6m + 0.5 * rs_12m
+        row["rs_rank_score"] = rs_rank
         parts = score_symbol(symbol, f, row, benchmark_ret6)
 
         total = 0.0
@@ -226,12 +268,15 @@ def compute_scores(
             v = parts.get(key)
             if v is not None:
                 total += v * weights[key]
-        total = _clamp(total)
+        total = _clamp(total + rs_boost_for(rs_rank))
         parts["score"] = round(total, 1)
         parts["regime"] = regime["regime"]
         parts["trend_ok"] = bool(row.get("trend_ok"))
         parts["above_200"] = bool(row.get("above_200"))
-        parts["rs_rank"] = row.get("rs_rank_score")
+        parts["rs_rank"] = rs_rank
+        parts["rs_6m"] = rs_6m
+        parts["rs_12m"] = rs_12m
+        parts["rs_boost"] = rs_boost_for(rs_rank)
         records.append(parts)
     return records
 

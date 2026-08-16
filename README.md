@@ -4,6 +4,20 @@ An institutional-grade quantitative screening and scoring ecosystem designed for
 
 ---
 
+## 📦 Two Editions
+
+**Sovereign Lite** (default — this is what runs in the preview and is recommended for a single user on SQLite + yFinance):
+
+- SQLite only (5 core tables + score history + quarterly results + MB candidate tracking)
+- yFinance-only data layer (`lite/data.py`) — no API keys, no Redis/Celery
+- 5-screen React dashboard: Dashboard · Screener · Elite Picks · Portfolio · Backtest
+- 5-factor regime-aware scoring (Quality/Growth/Momentum/Valuation/Risk), 100-Bagger Detector with MB v2 weights, one-click backtest
+- Entry point: `python3 lite_main.py` · deps: `requirements-lite.txt`
+
+**Sovereign Pro** (optional, legacy enterprise stack) — the original engine in `modules/`, `worker/`, `monitoring/`, `api/`. XGBoost/SHAP hybrid scoring, Redis + Celery distributed workers, Prometheus observability, Alpha Vantage multi-source ingestion. Loaded only if you explicitly run the Pro entry points (`main.py` / `sovereign-cli.py`) and install `requirements.txt` — it is never imported by the Lite app.
+
+---
+
 ## 💎 Core Investment Philosophy
 
 The Sovereign Engine is built on the **"Quality at a Reasonable Price" (QARP)** principle, enhanced by **Momentum Alpha**. It filters out 99% of the market noise to find stocks exhibiting high return on capital, robust cash flows, and accelerating earnings momentum.

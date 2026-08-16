@@ -194,6 +194,89 @@ def test_mb_uses_accel_over_single_quarter_growth():
 
 # ── Score history (trends) ──────────────────────────────────────────────────
 
+# ── Relative strength (6M/12M blend + boost) ───────────────────────────────
+
+def test_rs_boost_tiers():
+    assert scoring.rs_boost_for(96) == 10.0
+    assert scoring.rs_boost_for(95) == 10.0
+    assert scoring.rs_boost_for(92) == 7.0
+    assert scoring.rs_boost_for(85) == 4.0
+    assert scoring.rs_boost_for(79) == 0.0
+    assert scoring.rs_boost_for(None) == 0.0
+
+
+def test_accumulation_score_ranks_accumulating_stocks_higher():
+    accumulating = {"volume_ratio": 2.5, "ret_12m": 0.5, "eps_accel": 90.0}
+    fading = {"volume_ratio": 0.5, "ret_12m": -0.3, "eps_accel": 10.0}
+    assert scoring.accumulation_score(accumulating, accumulating) > scoring.accumulation_score(fading, fading) + 30
+
+
+def test_compute_scores_sets_rs_blend_boost_and_ranking():
+    import pandas as pd
+
+    idx = pd.date_range("2024-01-01", periods=400, freq="B")
+
+    def frame(closes):
+        s = pd.Series(closes, index=idx)
+        return pd.DataFrame({"close": s, "high": s + 1, "low": s - 1, "volume": pd.Series([1_000_000] * 400, index=idx)})
+
+    rising = frame([100 + i * 0.2 for i in range(400)])
+    falling = frame([200 - i * 0.2 for i in range(400)])
+    prices = {"WIN.NS": rising, "LOSE.NS": falling}
+    scoring.attach_indicators(prices)
+    fundas = [
+        {"symbol": "WIN.NS", "roe": 20, "roce": 25, "debt_equity": 0.3, "sales_growth": 15, "profit_growth": 15, "pe": 20, "pb": 3, "sector": "Technology"},
+        {"symbol": "LOSE.NS", "roe": 10, "roce": 10, "debt_equity": 1.5, "sales_growth": 5, "profit_growth": 5, "pe": 40, "pb": 6, "sector": "Technology"},
+    ]
+    regime = {"regime": "BULL", "weights": {"quality": 0.25, "growth": 0.30, "momentum": 0.35, "valuation": 0.05, "risk": 0.05}}
+    recs = scoring.compute_scores(regime, fundas, prices)
+    by = {r["symbol"]: r for r in recs}
+    win, lose = by["WIN.NS"], by["LOSE.NS"]
+    assert win["rs_6m"] is not None and win["rs_12m"] is not None
+    assert win["rs_rank"] > lose["rs_rank"]
+    assert win["rs_boost"] >= lose["rs_boost"]
+    assert win["accumulation"] is not None
+    assert win["score"] > lose["score"]
+
+
+# ── Earnings acceleration (Revenue/EPS/PAT trends) ──────────────────────────
+
+def test_trend_score_rewards_acceleration():
+    from lite import data
+
+    accelerating = [0.10, 0.18, 0.25, 0.38]
+    flat = [0.20, 0.20, 0.20, 0.20]
+    decelerating = [0.38, 0.25, 0.18, 0.10]
+    assert data._trend_score(accelerating) > data._trend_score(flat) > data._trend_score(decelerating)
+    assert data._trend_score([0.20]) is None  # needs >= 2 points
+
+
+# ── MB candidates tracking ──────────────────────────────────────────────────
+
+def test_mb_candidates_snapshot_and_history(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "mb.db"))
+    db_mod.init_db()
+
+    recs = [
+        {"symbol": "A.NS", "mb_score": 82.0, "mb_rank": 1, "mb_bucket": "STRONG"},
+        {"symbol": "B.NS", "mb_score": 45.0, "mb_rank": 2, "mb_bucket": "WATCHLIST"},
+    ]
+    db_mod.snapshot_mb_candidates(recs, "2026-08-15", "BULL")
+    assert db_mod.latest_mb_candidates()["A.NS"]["mb_rank"] == 1
+    assert db_mod.previous_mb_candidates() == {}  # only one snapshot yet
+
+    recs2 = [
+        {"symbol": "A.NS", "mb_score": 88.0, "mb_rank": 1, "mb_bucket": "STRONG"},
+        {"symbol": "B.NS", "mb_score": 50.0, "mb_rank": 2, "mb_bucket": "WATCHLIST"},
+    ]
+    db_mod.snapshot_mb_candidates(recs2, "2026-08-16", "BULL")
+    assert db_mod.previous_mb_candidates()["A.NS"]["mb_score"] == 82.0
+    hist = db_mod.mb_candidates_history("A.NS")
+    assert [h["mb_score"] for h in hist] == [82.0, 88.0]
+
+
 def test_score_history_snapshot_and_previous(tmp_path, monkeypatch):
     import lite.db as db_mod
 

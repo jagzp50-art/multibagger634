@@ -64,10 +64,16 @@ def run_scan(force_fundamentals: bool = False) -> dict:
     fundas_map = {f["symbol"]: f for f in fundas_list}
     mb_records = multibagger.detect(records, fundas_map, px_frames)
 
+    # MB rank (by MB score) so the candidates table tracks movement over time.
+    mb_records.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)
+    for i, r in enumerate(mb_records, start=1):
+        r["mb_rank"] = i
+
     # Score history: compare against the previous snapshot, then append this one.
     prev = db.latest_score_snapshot()
     db.upsert_scores(mb_records)
     db.snapshot_scores(mb_records, date.today().isoformat(), regime["regime"])
+    db.snapshot_mb_candidates(mb_records, date.today().isoformat(), regime["regime"])
     for r in mb_records:
         old = prev.get(r["symbol"]) or {}
         r["prev_score"] = old.get("score")

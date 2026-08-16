@@ -368,7 +368,7 @@ function ElitePicks(){
   const [err,setErr] = useState(null);
   useEffect(()=>{
     j('/api/picks?limit=20').then(setPicks).catch(e=>setErr(e.message));
-    j('/api/multibaggers').then(setMbs).catch(()=>{});
+    j('/api/mb-candidates?limit=100').then(setMbs).catch(()=>{});
   },[]);
   if (err && !picks) return <Empty icon="⚠️" text={err}/>;
   if (!picks) return <Loader/>;
@@ -382,7 +382,7 @@ function ElitePicks(){
               <thead><tr>
                 <th>Rank</th><th>Symbol</th><th>Bucket</th>
                 <th className="num">Score</th><th className="num">Δ Score</th><th className="num">Quality</th><th className="num">Growth</th>
-                <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th>
+                <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th><th className="num">Accum</th>
               </tr></thead>
               <tbody>
                 {picks.map(r=>(
@@ -397,6 +397,7 @@ function ElitePicks(){
                     <td className="num">{fmt(r.momentum,0)}</td>
                     <td className="num">{fmt(r.valuation,0)}</td>
                     <td className="num">{fmt(r.risk,0)}</td>
+                    <td className="num">{fmt(r.accumulation,0)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -411,16 +412,18 @@ function ElitePicks(){
           <div className="tbl-wrap">
             <table>
               <thead><tr>
-                <th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Rules</th>
+                <th className="num">MB Rank</th><th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Δ MB</th><th className="num">Rules</th>
                 <th className="num">Growth</th><th className="num">Quality</th><th className="num">Momentum</th>
                 <th className="num">Mkt Cap</th>
               </tr></thead>
               <tbody>
                 {mbs.slice(0,30).map(r=>(
                   <tr key={r.symbol}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.mb_rank != null ? r.mb_rank : '—'}</td>
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td className="num"><ScoreCell score={r.mb_score}/></td>
                     <td><Bucket b={r.mb_bucket}/></td>
+                    <td className="num"><Delta v={r.mb_delta}/></td>
                     <td style={{fontFamily:'var(--mono)',fontSize:9}}>
                       {(r.mb_checklist||[]).map(c=>(
                         <span key={c.code} className={`rule ${c.pass?'pass':'fail'}`} title={c.label}>{c.code}</span>

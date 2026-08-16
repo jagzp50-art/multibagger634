@@ -171,9 +171,23 @@ def create_app() -> FastAPI:
     def multibaggers():
         scores = db.load_scores()
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
-        rows = _merge(scores, fundas)
+        rows = _with_mb_prev(_merge(scores, fundas))
         rows.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)
         return _json_safe([r for r in rows if r.get("mb_checklist") is not None][:100])
+
+    @app.get("/api/mb-candidates")
+    def mb_candidates(bucket: Optional[str] = None, limit: int = 100):
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        rows = _with_mb_prev(_merge(scores, fundas))
+        rows.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)
+        if bucket:
+            rows = [r for r in rows if (r.get("mb_bucket") or "") == bucket.upper()]
+        return _json_safe(rows[: max(1, min(limit, 300))])
+
+    @app.get("/api/mb-candidates/{symbol}")
+    def mb_candidate_history(symbol: str, limit: int = 40):
+        return _json_safe(db.mb_candidates_history(symbol, limit=max(1, min(limit, 200))))
 
     # ── Score history + quarterly detail ─────────────────────────────────────
 
@@ -263,6 +277,29 @@ def _merge(scores: list[dict], fundas: dict[str, dict]) -> list[dict]:
         row["growth_metric"] = f.get("sales_growth")
         out.append(row)
     return out
+
+
+def _with_mb_prev(rows: list[dict]) -> list[dict]:
+    """Attach MB trend deltas (MB score/rank vs previous candidate snapshot)."""
+    latest = db.latest_mb_candidates()
+    prev = db.previous_mb_candidates()
+    for r in rows:
+        sym = r.get("symbol", "")
+        cur_row = latest.get(sym) or {}
+        old = prev.get(sym) or {}
+        cur = r.get("mb_score")
+        prev_mb = old.get("mb_score")
+        r["mb_rank"] = cur_row.get("mb_rank")
+        r["prev_mb_score"] = prev_mb
+        r["mb_delta"] = (
+            round(cur - prev_mb, 1) if cur is not None and prev_mb is not None else None
+        )
+        r["mb_rank_delta"] = (
+            old.get("mb_rank") - cur_row.get("mb_rank")
+            if cur_row.get("mb_rank") is not None and old.get("mb_rank") is not None
+            else None
+        )
+    return rows
 
 
 def _with_prev(rows: list[dict]) -> list[dict]:

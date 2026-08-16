@@ -169,51 +169,97 @@ def _from_info(info: dict, symbol: str = "") -> dict:
     }
 
 
+def _yoy_growths(series: pd.Series) -> list[Optional[float]]:
+    """YoY growth (as fraction) for the last 4 points of a quarterly series."""
+    growths = []
+    for i in range(len(series) - 4, len(series)):
+        base = series.iloc[i - 4]
+        cur = series.iloc[i]
+        if base is None or cur is None or base == 0:
+            growths.append(None)
+        else:
+            growths.append(max(min(cur / base - 1, 5.0), -5.0))
+    return growths
+
+
+def _trend_score(growths: list[Optional[float]]) -> Optional[float]:
+    """0-100 acceleration score: latest YoY growth (60%) + slope (40%).
+
+    Slope is first→last quarter growth delta, so 10→18→25→38% scores far
+    higher than flat 20% — that's the earnings-acceleration signal.
+    """
+    valid = [g for g in growths if g is not None]
+    if len(valid) < 2:
+        return None
+    latest = valid[-1]
+    slope = valid[-1] - valid[0]
+    base_score = 100 / (1 + math.exp(-(latest * 100 - 20) / 15))
+    slope_score = 100 / (1 + math.exp(-(slope * 100 - 5) / 10))
+    return max(0.0, min(100.0, base_score * 0.6 + slope_score * 0.4))
+
+
 def _quarterly_metrics(symbol: str) -> dict:
     """Quarterly income-statement metrics for a symbol.
 
-    Returns {"eps_accel": 0-100 score, "eps_quarters": YoY growth list,
-    "margin_expansion": pp change in net margin (last 4Q avg vs prior 4Q avg),
-    "quarters": [{period_end, quarter, revenue, net_income, net_margin}]}.
-    Every field degrades to None/[] when the statement is unavailable.
+    Returns {"eps_accel": blended 0-100 Revenue/EPS/PAT acceleration,
+    "rev_accel"/"pat_accel": individual 0-100 trend scores,
+    "eps_quarters": YoY PAT-growth list, "rev_quarters": YoY revenue-growth
+    list, "margin_expansion": pp change in net margin (last 4Q avg vs prior
+    4Q avg), "quarters": [{period_end, quarter, revenue, net_income,
+    net_margin}]}. Every field degrades to None/[] when unavailable.
     """
     import yfinance as yf
 
-    out = {"eps_accel": None, "eps_quarters": [], "margin_expansion": None, "quarters": []}
+    out = {
+        "eps_accel": None,
+        "rev_accel": None,
+        "pat_accel": None,
+        "eps_quarters": [],
+        "rev_quarters": [],
+        "margin_expansion": None,
+        "quarters": [],
+    }
     try:
         ticker = yf.Ticker(symbol)
         stmt = ticker.quarterly_income_stmt
         if stmt is None or stmt.empty:
             return out
-        if "Net Income" in stmt.index:
-            ni = stmt.loc["Net Income"].dropna().astype(float).sort_index()
-        else:
-            ni = pd.Series(dtype=float)
+        ni = (
+            stmt.loc["Net Income"].dropna().astype(float).sort_index()
+            if "Net Income" in stmt.index
+            else pd.Series(dtype=float)
+        )
         rev = (
             stmt.loc["Total Revenue"].dropna().astype(float).sort_index()
             if "Total Revenue" in stmt.index
             else pd.Series(dtype=float)
         )
+        eps = (
+            stmt.loc["Diluted EPS"].dropna().astype(float).sort_index()
+            if "Diluted EPS" in stmt.index
+            else pd.Series(dtype=float)
+        )
         if len(ni) < 5:
             return out
 
-        # YoY net-income growth per quarter → acceleration score
-        growths = []
-        for i in range(len(ni) - 4, len(ni)):
-            base = ni.iloc[i - 4]
-            cur = ni.iloc[i]
-            if base is None or cur is None or base == 0:
-                growths.append(None)
-            else:
-                growths.append(max(min(cur / base - 1, 5.0), -5.0))
-        valid = [g for g in growths if g is not None]
-        if len(valid) >= 2:
-            latest = valid[-1]
-            slope = valid[-1] - valid[0]
-            base_score = 100 / (1 + math.exp(-(latest * 100 - 20) / 15))
-            slope_score = 100 / (1 + math.exp(-(slope * 100 - 5) / 10))
-            out["eps_accel"] = max(0.0, min(100.0, base_score * 0.6 + slope_score * 0.4))
-        out["eps_quarters"] = [round(g * 100, 1) if g is not None else None for g in growths]
+        # YoY growth per quarter → acceleration score for each trend
+        pat_growths = _yoy_growths(ni)
+        rev_growths = _yoy_growths(rev) if len(rev) >= 5 else []
+        eps_growths = _yoy_growths(eps) if len(eps) >= 5 else []
+        out["rev_accel"] = _trend_score(rev_growths)
+        out["pat_accel"] = _trend_score(pat_growths)
+        eps_accel_raw = _trend_score(eps_growths)
+        # Blend: Revenue 35% · PAT 35% · EPS 30% (available parts only)
+        parts = [(out["rev_accel"], 0.35), (out["pat_accel"], 0.35), (eps_accel_raw, 0.30)]
+        num = den = 0.0
+        for v, w in parts:
+            if v is not None:
+                num += v * w
+                den += w
+        if den > 0:
+            out["eps_accel"] = max(0.0, min(100.0, num / den))
+        out["eps_quarters"] = [round(g * 100, 1) if g is not None else None for g in pat_growths]
+        out["rev_quarters"] = [round(g * 100, 1) if g is not None else None for g in rev_growths]
 
         # Net margin per quarter → margin-expansion signal (last 4Q avg vs prior 4Q avg)
         margins = []
@@ -268,7 +314,10 @@ def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dic
             metrics["symbol"] = sym
             q = _quarterly_metrics(sym)
             metrics["eps_accel"] = q["eps_accel"]
+            metrics["rev_accel"] = q["rev_accel"]
+            metrics["pat_accel"] = q["pat_accel"]
             metrics["eps_quarters"] = q["eps_quarters"]
+            metrics["rev_quarters"] = q["rev_quarters"]
             metrics["margin_expansion"] = q["margin_expansion"]
             if q["quarters"]:
                 db.upsert_quarterly_results(sym, q["quarters"])
