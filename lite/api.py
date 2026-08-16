@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 
 from . import alpha
 from . import backtest as bt
-from . import breadth, data, db, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
+from . import breadth, data, db, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .pipeline import run_scan
 from .universe import default_universe
 
@@ -60,7 +60,7 @@ def _recent_watchlist(limit: int = 10) -> list[dict]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Sovereign Lite v8", version="8.0.0")
+    app = FastAPI(title="Sovereign Lite v11", version="11.0.0")
 
     db.init_db(default_universe())
 
@@ -360,6 +360,47 @@ def create_app() -> FastAPI:
     def universe_history():
         """Universe membership snapshots (survivorship-bias protection)."""
         return _json_safe(db.universe_history_snapshots(limit=60))
+
+    # ── v11: Data quality + discovery engine ─────────────────────────────────
+
+    @app.get("/api/data-quality")
+    def data_quality_endpoint():
+        """Per-field yFinance fundamentals coverage — the data bottleneck made visible."""
+        return _json_safe(data.field_coverage())
+
+    @app.get("/api/discovery")
+    def discovery_endpoint(limit: int = 30):
+        """Emerging Leaders: discovery-tier names ranked by discovery_score
+        (RS rank + RS acceleration + revision proxy + momentum)."""
+        core = set(db.universe_symbols(tier="core"))
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        rows = _with_prev(_merge(scores, fundas))
+        disc = [r for r in rows if r.get("symbol") not in core]
+        for r in disc:
+            r["rs_accel"] = discovery.rs_acceleration(r)
+            r["discovery_score"] = discovery.discovery_score(r)
+        disc.sort(key=lambda r: r.get("discovery_score") or 0, reverse=True)
+        out = []
+        for r in disc[: max(1, min(int(limit), 200))]:
+            out.append(
+                {
+                    "symbol": r.get("symbol"),
+                    "name": r.get("name") or r.get("symbol"),
+                    "sector": r.get("sector"),
+                    "score": r.get("score"),
+                    "score_delta": r.get("score_delta"),
+                    "discovery_score": r.get("discovery_score"),
+                    "rs_rank": r.get("rs_rank"),
+                    "rs_accel": r.get("rs_accel"),
+                    "revision_score": r.get("revision_score"),
+                    "momentum": r.get("momentum"),
+                    "data_confidence": r.get("data_confidence"),
+                    "mb_bucket": r.get("mb_bucket"),
+                    "tier": "discovery",
+                }
+            )
+        return _json_safe({"n": len(disc), "rows": out})
 
     @app.get("/api/quote/{symbol}")
     def quote(symbol: str):

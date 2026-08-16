@@ -942,3 +942,70 @@ def test_vol_maxdd_persisted(tmp_path, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["vol"] == pytest.approx(0.34)
     assert rows[0]["max_dd"] == pytest.approx(-0.42)
+
+
+# ── v11: Revision proxy 2.0 · data quality · discovery engine ───────────────
+
+def test_revision_score_includes_cfo_growth():
+    base = {"eps_accel": 90, "rev_accel": 85, "margin_expansion": 6.0}
+    strong = dict(base, cfo_growth=0.30)
+    weak = dict(base, cfo_growth=-0.10)
+    assert scoring.revision_score(strong) > scoring.revision_score(weak) + 5
+
+
+def test_revision_factor_in_composite_and_attribution():
+    import pandas as pd
+
+    idx = pd.date_range("2024-01-01", periods=400, freq="B")
+    s = pd.Series([100 + i * 0.15 for i in range(400)], index=idx)
+    prices = {"REV.NS": pd.DataFrame({"close": s, "high": s + 1, "low": s - 1, "volume": pd.Series([1_000_000] * 400, index=idx)})}
+    scoring.attach_indicators(prices)
+    fundas = [{
+        "symbol": "REV.NS", "roe": 20, "roce": 25, "debt_equity": 0.3,
+        "sales_growth": 15, "profit_growth": 15, "pe": 20, "pb": 3,
+        "fcf_margin": 8, "sector": "Technology",
+        "eps_accel": 90, "rev_accel": 85, "margin_expansion": 6.0, "cfo_growth": 0.30,
+    }]
+    regime = {"regime": "BULL", "weights": {"quality": 0.25, "growth": 0.30, "momentum": 0.35, "valuation": 0.05, "risk": 0.05}}
+    rec = scoring.compute_scores(regime, fundas, prices)[0]
+    fc = rec["factor_contributions"]
+    assert fc.get("revision") is not None
+    # attribution bars sum back to the displayed score (rounding tolerance)
+    total = sum(v for v in fc.values() if v is not None)
+    assert abs(total - rec["score"]) < 0.6
+
+
+def test_field_coverage_reports_weak_fields(tmp_path, monkeypatch):
+    import lite.db as db_mod
+    from lite import data
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "dq.db"))
+    db_mod.init_db()
+    full = {"symbol": "A.NS", "roe": 20, "roce": 25, "debt_equity": 0.3, "sales_growth": 15,
+            "profit_growth": 15, "pe": 20, "pb": 3, "fcf_margin": 8, "eps_accel": 60,
+            "margin_expansion": 2.0, "cfo_growth": 0.2, "cfo_pat_ratio": 1.1, "accrual_ratio": -0.02,
+            "data_confidence": 92}
+    partial = {"symbol": "B.NS", "roe": 12, "roce": None, "debt_equity": 0.8, "sales_growth": 8,
+               "profit_growth": 8, "pe": 30, "pb": 4, "fcf_margin": None, "eps_accel": None,
+               "margin_expansion": None, "cfo_growth": None, "cfo_pat_ratio": None, "accrual_ratio": None,
+               "data_confidence": 55}
+    db_mod.upsert_fundamentals(full)
+    db_mod.upsert_fundamentals(partial)
+    cov = data.field_coverage()
+    assert cov["n"] == 2
+    by = {f["key"]: f["coverage"] for f in cov["fields"]}
+    assert by["roce"] == 50.0
+    assert by["cfo_growth"] == 50.0
+    assert by["roe"] == 100.0
+    assert cov["avg_confidence"] == pytest.approx(73.5)
+
+
+def test_discovery_score_ranks_accelerating_names():
+    from lite import discovery
+
+    accel = {"rs_rank": 80, "rs_1m": 92, "rs_3m": 60, "revision_score": 70, "momentum": 70, "data_confidence": 90}
+    decel = {"rs_rank": 80, "rs_1m": 60, "rs_3m": 92, "revision_score": 70, "momentum": 70, "data_confidence": 90}
+    assert discovery.discovery_score(accel) > discovery.discovery_score(decel)
+    assert discovery.rs_acceleration(accel) == pytest.approx(32.0)
+    assert discovery.rs_acceleration(decel) == pytest.approx(-32.0)
+    assert discovery.discovery_score({"rs_rank": None}) is None

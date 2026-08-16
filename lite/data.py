@@ -654,6 +654,48 @@ def fetch_quick_quote(symbol: str) -> Optional[dict]:
         return None
 
 
+COVERAGE_FIELDS: list[tuple[str, str]] = [
+    ("roe", "ROE"),
+    ("roce", "ROCE"),
+    ("debt_equity", "Debt/Equity"),
+    ("sales_growth", "Sales growth"),
+    ("profit_growth", "Profit growth"),
+    ("pe", "P/E"),
+    ("pb", "P/B"),
+    ("fcf_margin", "FCF margin"),
+    ("eps_accel", "EPS accel"),
+    ("margin_expansion", "Margin exp."),
+    ("rev_accel", "Rev accel"),
+    ("cfo_pat_ratio", "CFO/PAT"),
+    ("cfo_growth", "CFO growth"),
+    ("accrual_ratio", "Accrual ratio"),
+]
+
+
+def field_coverage() -> dict:
+    """Per-field fundamentals completeness across the universe.
+
+    yFinance coverage is the platform's bottleneck (missing ROCE, missing
+    CFO, inconsistent fields) — this makes the weak links visible per field
+    and explains the data-confidence dampener.
+    """
+    rows = db.load_fundamentals()
+    n = len(rows)
+    if n == 0:
+        return {"n": 0, "fields": [], "avg_confidence": None}
+    fields = []
+    for key, label in COVERAGE_FIELDS:
+        present = sum(1 for r in rows if r.get(key) is not None)
+        fields.append({"key": key, "label": label, "coverage": round(present / n * 100, 1)})
+    fields.sort(key=lambda f: f["coverage"])
+    confs = [r.get("data_confidence") for r in rows if r.get("data_confidence") is not None]
+    return {
+        "n": n,
+        "fields": fields,
+        "avg_confidence": round(sum(confs) / len(confs), 1) if confs else None,
+    }
+
+
 def _clean(v) -> Optional[float]:
     if v is None or pd.isna(v):
         return None

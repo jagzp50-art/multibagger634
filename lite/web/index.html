@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v10</title>
+<title>Sovereign Lite v11</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -169,14 +169,14 @@ function Empty({icon,text,children}){ return <div className="empty"><div classNa
 
 /* ── NAV ─────────────────────────────────────────────────────────────── */
 function Nav({tab,setTab,regime}){
-  const tabs = ['Dashboard','Screener','Elite Picks','Portfolio','Backtest'];
+  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Portfolio','Backtest'];
   const vix = regime && regime.vix;
   const vixClass = !vix ? 'warn' : vix >= 25 ? 'risk' : vix >= 20 ? 'warn' : 'safe';
   return (
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v10 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v11 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -193,10 +193,11 @@ function Nav({tab,setTab,regime}){
 function Dashboard(){
   const [data,setData] = useState(null);
   const [sectors,setSectors] = useState(null);
+  const [quality,setQuality] = useState(null);
   const [err,setErr] = useState(null);
   const [scanning,setScanning] = useState(false);
   const [scanResult,setScanResult] = useState(null);
-  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); },[load]);
+  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); },[load]);
   useEffect(load,[load]);
 
   const runScan = async (force, tier='core')=>{
@@ -249,6 +250,30 @@ function Dashboard(){
             <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.top1_share!=null ? portfolio_risk.top1_share+'%' : '—'}</span><span className="stat-key">Top-1 Weight</span></div>
             <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
             <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Data Quality</span><span className="note">yFinance fundamentals coverage · the bottleneck</span></div>
+        {!quality || !quality.n ? <div className="note">Run a scan to measure field coverage.</div> : (
+          <div>
+            <div style={{display:'flex',gap:24,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
+              <div className="stat"><span className={`stat-val ${quality.avg_confidence!=null && quality.avg_confidence>=70?'acid':quality.avg_confidence!=null && quality.avg_confidence>=50?'gold':'rose'}`} style={{fontSize:18}}>{quality.avg_confidence!=null ? quality.avg_confidence : '—'}</span><span className="stat-key">Avg Data Confidence</span></div>
+              <div className="stat"><span className="stat-val" style={{fontSize:18}}>{quality.n}</span><span className="stat-key">Names with fundamentals</span></div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:5}}>
+              {quality.fields.slice(0,6).map(f=>(
+                <div key={f.key} style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:90}}>{f.label}</span>
+                  <div style={{flex:1,height:6,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
+                    <div style={{height:'100%',width:f.coverage+'%',background:f.coverage<50?'var(--rose)':f.coverage<80?'var(--gold)':'var(--acid)',borderRadius:4}}/>
+                  </div>
+                  <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:'var(--t1)',width:44,textAlign:'right'}}>{f.coverage}%</span>
+                </div>
+              ))}
+            </div>
+            <div className="note" style={{marginTop:10}}>Weakest fields first — low coverage holds those names' scores down via the confidence dampener. A fundamentals refresh (force scan after the 24h TTL) repopulates them.</div>
           </div>
         )}
       </div>
@@ -435,7 +460,7 @@ function Screener(){
 /* ── ELITE PICKS + MB DETECTOR ───────────────────────────────────────── */
 function ContribRow({r}){
   const fc = r.factor_contributions || {};
-  const keys = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['rs_boost','RS Boost'],['sector_boost','Sector']];
+  const keys = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['revision','Revision'],['rs_boost','RS Boost'],['sector_boost','Sector']];
   return (
     <tr>
       <td colSpan={12} style={{background:'var(--bg3)',padding:'10px 16px'}}>
@@ -543,6 +568,51 @@ function ElitePicks(){
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ── DISCOVERY ──────────────────────────────────────────────────────── */
+function Discovery(){
+  const [rows,setRows] = useState(null);
+  const [err,setErr] = useState(null);
+  const load = useCallback(()=>{ j('/api/discovery').then(d=>setRows(d.rows||[])).catch(e=>setErr(e.message)); },[load]);
+  useEffect(load,[load]);
+  if (err && !rows) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
+  if (!rows) return <Loader/>;
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Discovery</div><div className="screen-sub">Emerging Leaders · RS acceleration · revision proxy</div></div>
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Emerging Leaders</span><span className="note">{rows.length} discovery-tier names · ranked by discovery score</span></div>
+        {rows.length === 0 ? <Empty icon="🧭" text="No discovery-tier scores yet — run the 🧭 Discovery Scan from the Dashboard."/> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Symbol</th><th>Sector</th><th className="num">Discovery</th><th className="num">RS Rank</th><th className="num">RS Accel</th><th className="num">Revision</th><th className="num">Momentum</th><th className="num">Composite</th><th className="num">Δ vs Scan</th><th className="num">Conf</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r,i)=>(
+                  <tr key={r.symbol}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
+                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span> {r.rs_accel!=null && r.rs_accel>5 && r.score_delta>0 ? <span className="badge badge-MULTIBAGGER">EMERGING</span> : null}</td>
+                    <td style={{color:'var(--t2)'}}>{r.sector}</td>
+                    <td className="num"><ScoreCell score={r.discovery_score}/></td>
+                    <td className="num">{fmt(r.rs_rank,0)}</td>
+                    <td className="num"><Delta v={r.rs_accel}/></td>
+                    <td className="num">{fmt(r.revision_score,0)}</td>
+                    <td className="num">{fmt(r.momentum,0)}</td>
+                    <td className="num">{fmt(r.score,0)}</td>
+                    <td className="num"><Delta v={r.score_delta}/></td>
+                    <td className="num" style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{r.data_confidence!=null ? r.data_confidence+'%' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="note" style={{marginTop:10}}>Discovery Score = 35% RS rank · 25% RS acceleration (1M−3M percentile) · 20% revision proxy · 20% momentum, dampened by data confidence. <b style={{color:'var(--gold)'}}>EMERGING</b> = RS accelerating and composite score rising.</div>
       </div>
     </div>
   );
@@ -975,6 +1045,7 @@ function App(){
         {tab==='Dashboard' && <Dashboard/>}
         {tab==='Screener' && <Screener/>}
         {tab==='Elite Picks' && <ElitePicks/>}
+        {tab==='Discovery' && <Discovery/>}
         {tab==='Portfolio' && <Portfolio/>}
         {tab==='Backtest' && <Backtest/>}
       </div>

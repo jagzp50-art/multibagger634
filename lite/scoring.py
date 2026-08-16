@@ -221,16 +221,19 @@ def revision_score(f: dict) -> Optional[float]:
     earnings, so acceleration signals carry alpha:
 
     35% EPS acceleration · 30% revenue acceleration · 20% margin expansion ·
-    15% annual revenue acceleration (5y trend).
+    15% CFO growth.
+
+    CFO growth is the confirmation layer: earnings backed by growing
+    operating cash flow are real, not accrual-driven.
     """
     accel = f.get("eps_accel")
     accel = _clamp(accel, 0, 100) if accel is not None else None
     rev = f.get("rev_accel")
     rev = _clamp(rev, 0, 100) if rev is not None else None
     margin = margin_expansion_score(f)
-    rev_annual = f.get("revenue_accel_annual")
-    rev_annual = _clamp(rev_annual, 0, 100) if rev_annual is not None else None
-    return _weighted([(accel, 0.35), (rev, 0.30), (margin, 0.20), (rev_annual, 0.15)])
+    cfo = f.get("cfo_growth")
+    cfo = sigmoid(cfo * 100, 10, 15) if cfo is not None else None
+    return _weighted([(accel, 0.35), (rev, 0.30), (margin, 0.20), (cfo, 0.15)])
 
 
 def opportunity_score(row: dict) -> Optional[float]:
@@ -364,18 +367,29 @@ def compute_scores(
             v = parts.get(key)
             if v is not None:
                 total += v * weights[key]
+        revision = revision_score(f)
+        if revision is not None:
+            # Revision proxy (future-earnings view) earns a dedicated 10%
+            # slice of the composite — the five regime factors share the
+            # remaining 90% proportionally.
+            total = 0.90 * total + 0.10 * revision
         total = _clamp(total + rs_boost_for(rs_rank))
         # Data-confidence dampener: partial fundamentals can't rank as highly.
         confidence = f.get("data_confidence")
         conf_factor = confidence_factor(confidence)
         total = _clamp(total * conf_factor)
         # Factor attribution: each factor's contribution to the final score.
+        # When revision exists it owns a 10% slice, so the five regime
+        # factors scale by 0.90 — the bars always sum to the score shown.
         contrib: dict[str, Optional[float]] = {}
+        five_scale = 0.90 if revision is not None else 1.0
         for key in ("quality", "growth", "momentum", "valuation", "risk"):
             v = parts.get(key)
-            contrib[key] = round(v * weights[key] * conf_factor, 1) if v is not None else None
+            contrib[key] = round(v * weights[key] * five_scale * conf_factor, 1) if v is not None else None
         rs_boost = rs_boost_for(rs_rank)
         contrib["rs_boost"] = round(rs_boost * conf_factor, 1) if rs_boost else None
+        if revision is not None:
+            contrib["revision"] = round(revision * 0.10 * conf_factor, 1)
         contrib["sector_boost"] = None  # attached post-rotation by the pipeline
         parts["score"] = round(total, 1)
         parts["regime"] = regime["regime"]
@@ -389,7 +403,7 @@ def compute_scores(
         parts["rs_boost"] = rs_boost
         parts["data_confidence"] = confidence
         parts["institutional_quality"] = institutional_quality_score(f)
-        parts["revision_score"] = revision_score(f)
+        parts["revision_score"] = revision
         parts["factor_contributions"] = contrib
         parts["vol"] = row.get("vol")
         parts["max_dd"] = row.get("max_dd")
