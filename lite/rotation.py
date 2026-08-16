@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — sector rotation.
+Sovereign Lite v13 — sector rotation.
 
 Ranks sectors by a blend of relative strength, earnings growth, breadth and
 momentum, then applies a modest boost to stocks inside strong sectors and a

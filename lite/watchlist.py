@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — watchlist intelligence (the daily idea generator).
+Sovereign Lite v13 — watchlist intelligence (the daily idea generator).
 
 Fires events when a stock does something interesting relative to the
 previous scan:

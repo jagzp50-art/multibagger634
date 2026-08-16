@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — lightweight technical indicators (pandas only).
+Sovereign Lite v13 — lightweight technical indicators (pandas only).
 
 Implements exactly what the scoring/regime layers need:
   SMA, Wilder's ADX, RSI, realized volatility, max drawdown,

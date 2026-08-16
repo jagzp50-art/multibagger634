@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — SQLite data layer (exactly 5 tables).
+Sovereign Lite v13 — SQLite data layer (exactly 5 tables).
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol

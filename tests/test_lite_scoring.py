@@ -1099,3 +1099,87 @@ def test_discovery_weights_are_orthogonal():
     tiny = discovery.discovery_score(dict(base, market_cap=20))  # ₹20Cr — illiquid microcap
     assert bigger_margin > a
     assert tiny < a
+
+
+# ── v13: Explainability + research endpoints (the visibility surface) ────────
+
+def _seed_explain_db(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "v13.db"))
+    db_mod.init_db()
+    db_mod.add_stock("TRENT.NS", tier="core")
+    rec = {
+        "symbol": "TRENT.NS", "score": 92.0, "rank": 3, "quality": 90.0, "growth": 85.0,
+        "momentum": 88.0, "valuation": 40.0, "risk": 70.0, "mb_score": 55.0, "mb_bucket": "STRONG",
+        "mb_checklist": ["R1"], "regime": "BULL", "rs_rank": 95.0, "rs_1m": 90.0, "rs_3m": 91.0,
+        "rs_6m": 92.0, "rs_12m": 93.0, "rs_boost": 6.0, "accumulation": 60.0, "pos_score": 70.0,
+        "opp_score": 75.0, "sector_boost": 2.0, "trend_ok": True, "institutional_quality": 88.0,
+        "revision_score": 80.0, "compounder_score": 66.0, "reinvestment_score": 55.0, "vol": 0.28,
+        "max_dd": -0.20, "liquidity": 0.9, "rs_consistency": 95.0, "data_confidence": 90.0,
+        "factor_contributions": {"quality": 20.7, "growth": 22.1, "momentum": 26.4, "valuation": 8.2,
+                                  "risk": 5.3, "revision": 8.0, "rs_boost": 6.0, "sector_boost": 2.0},
+    }
+    db_mod.upsert_scores([rec])
+    db_mod.upsert_fundamentals({"symbol": "TRENT.NS", "sector": "Retail", "name": "Trent Ltd", "market_cap": 210000.0})
+    for i, sc in enumerate([68.0, 74.0, 82.0, 92.0]):
+        db_mod.snapshot_scores([{**rec, "score": sc}], f"2025-0{i+1}-01", "BULL")
+    db_mod.save_factor_ic([{"scan_date": "2025-04-01", "factor": "momentum", "horizon_days": 30, "ic": 0.21, "regime": "BULL", "n": 40}])
+    db_mod.save_factor_ic([{"scan_date": "2025-04-01", "factor": "quality", "horizon_days": 30, "ic": 0.11, "regime": "BULL", "n": 40}])
+    return rec
+
+
+def test_health_reports_single_source_version(tmp_path, monkeypatch):
+    import lite
+    from lite import api
+
+    _seed_explain_db(tmp_path, monkeypatch)
+    app = api.create_app()
+    routes = {r.path: r for r in app.routes if hasattr(r, "path")}
+    body = routes["/api/health"].endpoint()
+    assert body["version"] == lite.VERSION == "13.0.0"
+
+
+def test_explain_endpoint_shape(tmp_path, monkeypatch):
+    from lite import api
+
+    _seed_explain_db(tmp_path, monkeypatch)
+    app = api.create_app()
+    routes = {r.path: r for r in app.routes if hasattr(r, "path")}
+    e = routes["/api/explain/{symbol}"].endpoint("TRENT.NS")
+    assert e["score"] == 92.0 and e["rank"] == 3
+    assert e["best_positive"]["label"] and e["best_negative"]["label"]
+    assert set(e["contributions"]) >= {"quality", "growth", "momentum", "valuation", "risk", "revision"}
+    assert e["score_history"] == [68.0, 74.0, 82.0, 92.0]
+    assert e["score_delta"] == pytest.approx(10.0)
+    # Missing symbol -> 404
+    with pytest.raises(Exception):
+        routes["/api/explain/{symbol}"].endpoint("NOPE.NS")
+
+
+def test_research_endpoints(tmp_path, monkeypatch):
+    from lite import api
+
+    _seed_explain_db(tmp_path, monkeypatch)
+    app = api.create_app()
+    routes = {r.path: r for r in app.routes if hasattr(r, "path")}
+    rf = routes["/api/research/factors"].endpoint()
+    assert rf["factors"][0]["factor"] == "momentum"  # ranked by avg IC desc
+    assert rf["factors"][0]["avg_ic"] == pytest.approx(0.21)
+    rr = routes["/api/research/regimes"].endpoint()
+    assert rr["regimes"][0]["best_factor"] == "momentum"
+    assert rr["snapshot_counts"]["BULL"] == 4
+
+
+def test_overview_endpoint_aggregates(tmp_path, monkeypatch):
+    import lite
+    from lite import api
+
+    _seed_explain_db(tmp_path, monkeypatch)
+    app = api.create_app()
+    routes = {r.path: r for r in app.routes if hasattr(r, "path")}
+    o = routes["/api/overview"].endpoint()
+    assert o["version"] == lite.VERSION
+    assert o["top_picks"][0]["symbol"] == "TRENT.NS"
+    assert o["factor_ic"][0]["factor"] == "momentum"
+    assert o["scored"] == 1

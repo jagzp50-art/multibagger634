@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — FastAPI application.
+Sovereign Lite v13 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -74,7 +74,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "8.0.0", "engine": "sovereign-lite"}
+        return {"status": "ok", "version": VERSION, "engine": "sovereign-lite"}
 
     # ── Regime ───────────────────────────────────────────────────────────────
 
@@ -168,6 +168,167 @@ def create_app() -> FastAPI:
                 "last_scan_regime": last_scan.get("regime") if last_scan else None,
             }
         )
+
+    # ── Explainability / research surface ────────────────────────────────────
+
+    @app.get("/api/explain/{symbol}")
+    def explain(symbol: str):
+        """Why does this stock score what it scores?
+
+        Returns rank, the full factor-contribution breakdown, human-readable
+        best positive / negative reasons, and the score history trail — the
+        payload behind the Explainability drawer.
+        """
+        scores = {r["symbol"]: r for r in db.load_scores()}
+        r = scores.get(symbol)
+        if not r:
+            raise HTTPException(status_code=404, detail=f"No scored data for {symbol}")
+        f = next((f for f in db.load_fundamentals() if f["symbol"] == symbol), {})
+        fc = r.get("factor_contributions") or {}
+        contributions: dict[str, Optional[float]] = {}
+        for k in ("quality", "growth", "momentum", "valuation", "risk"):
+            v = fc.get(k)
+            if v is not None:
+                contributions[k] = v
+        for k in ("revision", "rs_boost", "sector_boost"):
+            v = fc.get(k)
+            if v is not None:
+                contributions[k] = v
+        positives = [(k, v) for k, v in contributions.items() if v is not None and v > 0]
+        all_parts = [(k, v) for k, v in contributions.items() if v is not None]
+        best_pos = max(positives, key=lambda kv: kv[1]) if positives else None
+        worst = min(all_parts, key=lambda kv: kv[1]) if all_parts else None
+        history = [h for h in (h["score"] for h in db.score_history_for(symbol, limit=12)) if h is not None]
+        delta = round(history[-1] - history[-2], 1) if len(history) >= 2 else None
+        reasons = {
+            "quality": ("High return on capital", "Weak profitability"),
+            "growth": ("Earnings acceleration", "Stalling growth"),
+            "momentum": ("Strong relative strength", "Lagging price trend"),
+            "valuation": ("Attractive valuation", "Expensive valuation"),
+            "risk": ("Low risk profile", "Elevated risk"),
+            "revision": ("Rising earnings revisions", "Falling earnings revisions"),
+            "rs_boost": ("Relative strength boost", "Relative strength drag"),
+            "sector_boost": ("Sector tailwind", "Sector headwind"),
+        }
+        return _json_safe(
+            {
+                "symbol": symbol,
+                "rank": r.get("rank"),
+                "score": r.get("score"),
+                "score_delta": delta,
+                "mb_bucket": r.get("mb_bucket"),
+                "regime": r.get("regime"),
+                "data_confidence": r.get("data_confidence"),
+                "sector": f.get("sector"),
+                "name": f.get("name"),
+                "market_cap": f.get("market_cap"),
+                "contributions": contributions,
+                "best_positive": (
+                    {"factor": best_pos[0], "label": reasons.get(best_pos[0], (best_pos[0], ""))[0], "value": best_pos[1]}
+                    if best_pos
+                    else None
+                ),
+                "best_negative": (
+                    {"factor": worst[0], "label": reasons.get(worst[0], ("", worst[0]))[1], "value": worst[1]}
+                    if worst
+                    else None
+                ),
+                "score_history": history,
+            }
+        )
+
+    @app.get("/api/overview")
+    def overview():
+        """One-shot platform overview: state of the market, the model, and the
+        book in a single payload (the Overview page's data source)."""
+        try:
+            regime = _fresh_regime()
+        except Exception as exc:
+            regime = {"regime": "?", "error": str(exc)}
+        try:
+            breadth = _fresh_breadth()
+        except Exception:
+            breadth = {}
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        rows = _merge(scores, fundas)
+        rows.sort(key=lambda r: (r.get("score") or 0), reverse=True)
+        top_picks = [
+            {
+                "symbol": r["symbol"],
+                "rank": r.get("rank"),
+                "score": r.get("score"),
+                "mb_bucket": r.get("mb_bucket"),
+                "sector": r.get("sector"),
+                "quality": r.get("quality"),
+                "growth": r.get("growth"),
+                "momentum": r.get("momentum"),
+            }
+            for r in rows[:5]
+        ]
+        ic = alpha.ic_summary()
+        factors = sorted(
+            ((k, v) for k, v in (ic.get("factors") or {}).items()),
+            key=lambda kv: kv[1].get("avg_ic") or 0,
+            reverse=True,
+        )
+        return _json_safe(
+            {
+                "version": VERSION,
+                "regime": regime,
+                "allocation": regime.get("allocation"),
+                "breadth": breadth,
+                "universe": db.universe_tiers(),
+                "scored": len(scores),
+                "top_picks": top_picks,
+                "factor_ic": [{"factor": k, **v} for k, v in factors[:6]],
+                "alpha_decay": db.load_alpha_rows(limit_horizons=4),
+                "last_scan_at": (db.latest_scan_regime() or {}).get("updated_at"),
+            }
+        )
+
+    @app.get("/api/research/factors")
+    def research_factors():
+        """Factor research: which factor actually predicts forward returns
+        (avg/last Spearman IC, ranked) + realized alpha decay per horizon."""
+        ic = alpha.ic_summary()
+        factors = sorted(
+            ((k, v) for k, v in (ic.get("factors") or {}).items()),
+            key=lambda kv: kv[1].get("avg_ic") or 0,
+            reverse=True,
+        )
+        return _json_safe(
+            {
+                "factors": [{"factor": k, **v} for k, v in factors],
+                "alpha_decay": db.load_alpha_rows(limit_horizons=5),
+                "updated": ic.get("updated"),
+            }
+        )
+
+    @app.get("/api/research/regimes")
+    def research_regimes():
+        """Per-regime factor performance: which factor wins in Bull vs Bear vs
+        Sideways vs High-Vol, with snapshot counts per regime."""
+        ic = alpha.ic_summary()
+        regimes = ic.get("regimes") or {}
+        out = []
+        for rg, fmap in regimes.items():
+            ranked = sorted(fmap.items(), key=lambda kv: kv[1], reverse=True)
+            out.append(
+                {
+                    "regime": rg,
+                    "factors": {k: v for k, v in ranked},
+                    "best_factor": ranked[0][0] if ranked else None,
+                }
+            )
+        counts: dict[str, int] = {}
+        for ts in db.score_snapshot_times(limit=200):
+            rows = db.score_history_at(ts)
+            if rows:
+                rg = rows[0].get("regime") or "?"
+                counts[rg] = counts.get(rg, 0) + 1
+        out.sort(key=lambda o: counts.get(o["regime"], 0), reverse=True)
+        return _json_safe({"regimes": out, "snapshot_counts": counts, "updated": ic.get("updated")})
 
     # ── Screener ─────────────────────────────────────────────────────────────
 

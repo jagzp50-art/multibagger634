@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v12</title>
+<title>Sovereign Lite v13</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -169,14 +169,14 @@ function Empty({icon,text,children}){ return <div className="empty"><div classNa
 
 /* ── NAV ─────────────────────────────────────────────────────────────── */
 function Nav({tab,setTab,regime}){
-  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Portfolio','Backtest'];
+  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Research','Portfolio','Backtest'];
   const vix = regime && regime.vix;
   const vixClass = !vix ? 'warn' : vix >= 25 ? 'risk' : vix >= 20 ? 'warn' : 'safe';
   return (
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v12 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v13 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -414,6 +414,7 @@ function Dashboard(){
 function Screener(){
   const [rows,setRows] = useState(null);
   const [err,setErr] = useState(null);
+  const [explain,setExplain] = useState(null);
   const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',min_conf:'',bucket:'',sort:'opp'});
   const [loading,setLoading] = useState(false);
 
@@ -474,7 +475,7 @@ function Screener(){
               </tr></thead>
               <tbody>
                 {rows.map(r=>(
-                  <tr key={r.symbol}>
+                  <tr key={r.symbol} style={{cursor:'pointer'}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
                     <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td style={{color:'var(--t2)'}}>{r.sector || '—'}</td>
@@ -495,34 +496,82 @@ function Screener(){
           </div>
         )}
       </div>
+      {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
     </div>
   );
 }
 
-/* ── ELITE PICKS + MB DETECTOR ───────────────────────────────────────── */
-function ContribRow({r}){
-  const fc = r.factor_contributions || {};
-  const keys = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['revision','Revision'],['rs_boost','RS Boost'],['sector_boost','Sector']];
+/* ── EXPLAINABILITY DRAWER ───────────────────────────────────────────── */
+const FACTOR_LABELS = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['revision','Revision'],['rs_boost','RS Boost'],['sector_boost','Sector']];
+function Explain({symbol,onClose}){
+  const [d,setD] = useState(null);
+  const [err,setErr] = useState(null);
+  useEffect(()=>{ setD(null); setErr(null); j('/api/explain/'+symbol).then(setD).catch(e=>setErr(e.message)); },[symbol]);
+  const hist = d ? (d.score_history||[]) : [];
+  const pts = hist.length > 1 ? hist.map((v,i)=>`${(i/(hist.length-1))*250},${40-(Math.max(0,Math.min(100,v))/100)*34}`).join(' ') : '';
   return (
-    <tr>
-      <td colSpan={12} style={{background:'var(--bg3)',padding:'10px 16px'}}>
-        <div style={{display:'flex',gap:16,flexWrap:'wrap',alignItems:'center'}}>
-          <span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)',textTransform:'uppercase',letterSpacing:1}}>Why {r.symbol.replace('.NS','')} scores {fmt(r.score,0)}</span>
-          {keys.map(([k,label])=>{
-            const v = fc[k];
-            if (v == null || isNaN(v)) return null;
-            const c = v >= 0 ? 'var(--acid)' : 'var(--rose)';
-            return (
-              <div key={k} style={{display:'flex',flexDirection:'column',gap:2,minWidth:72}}>
-                <span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)'}}>{label}</span>
-                <span style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:600,color:c}}>{v > 0 ? '+' : ''}{Number(v).toFixed(1)}</span>
-                <div style={{height:3,width:64,background:'var(--bg0)',borderRadius:2}}><div style={{height:'100%',width:Math.min(100,Math.abs(v))+'%',background:c,borderRadius:2}}/></div>
+    <>
+      <div style={{position:'fixed',inset:0,background:'rgba(4,10,16,0.6)',zIndex:60}} onClick={onClose}/>
+      <div className="anim" style={{position:'fixed',top:0,right:0,bottom:0,width:390,maxWidth:'94vw',background:'var(--bg1)',borderLeft:'1px solid var(--wire2)',zIndex:61,padding:18,overflowY:'auto',display:'flex',flexDirection:'column',gap:12}}>
+        {err ? <Empty icon="⚠️" text={err}/> : !d ? <Loader/> : (
+          <>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
+              <div>
+                <div style={{fontSize:19,fontWeight:700,color:'var(--t0)',letterSpacing:'0.02em'}}>{symbol.replace('.NS','')}</div>
+                <div style={{fontSize:9,color:'var(--t3)',marginTop:2}}>{d.name||''}{d.sector ? ' · '+d.sector : ''}{d.market_cap!=null ? ' · '+fmtCr(d.market_cap) : ''}</div>
               </div>
-            );
-          })}
-        </div>
-      </td>
-    </tr>
+              <button className="btn-ghost" style={{padding:'2px 9px'}} onClick={onClose}>✕</button>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+              <div>
+                <div style={{fontFamily:'var(--mono)',fontSize:30,fontWeight:700,color:SCORE_COLOR(d.score)}}>{fmt(d.score,0)}</div>
+                <div style={{fontSize:8,color:'var(--t3)',letterSpacing:'0.12em'}}>COMPOSITE</div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:8,color:'var(--t3)'}}>RANK</span><span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:600,color:'var(--t1)'}}>#{d.rank!=null?d.rank:'—'}</span>{d.mb_bucket && <Bucket b={d.mb_bucket}/>}</div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:8,color:'var(--t3)'}}>Δ SCORE</span><Delta v={d.score_delta}/></div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:8,color:'var(--t3)'}}>REGIME</span><span className={`regime-chip regime-${d.regime}`}>{d.regime||'—'}</span></div>
+              </div>
+              <div style={{marginLeft:'auto'}}><span style={{fontSize:8,color:'var(--t3)'}}>CONF</span><div style={{marginTop:3}}><ConfCell v={d.data_confidence}/></div></div>
+            </div>
+            <div className="card" style={{padding:'10px 12px'}}>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>FACTOR CONTRIBUTIONS</div>
+              <div style={{display:'flex',flexDirection:'column',gap:7,marginTop:8}}>
+                {FACTOR_LABELS.map(([k,label])=>{
+                  const v = d.contributions ? d.contributions[k] : null;
+                  if (v == null || isNaN(v)) return null;
+                  const c = v >= 0 ? 'var(--acid)' : 'var(--rose)';
+                  return (
+                    <div key={k} style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:74}}>{label}</span>
+                      <div style={{flex:1,height:7,background:'var(--bg0)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:Math.min(100,Math.abs(v))+'%',background:c,borderRadius:4}}/>
+                      </div>
+                      <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:c,width:44,textAlign:'right'}}>{v>0?'+':''}{Number(v).toFixed(1)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {d.best_positive && <div style={{fontSize:10,color:'var(--acid)',fontFamily:'var(--mono)'}}>▲ {d.best_positive.label} <span style={{color:'var(--t3)'}}>· {d.best_positive.value>0?'+':''}{Number(d.best_positive.value).toFixed(1)} pts</span></div>}
+              {d.best_negative && <div style={{fontSize:10,color:'var(--rose)',fontFamily:'var(--mono)'}}>▼ {d.best_negative.label} <span style={{color:'var(--t3)'}}>· {Number(d.best_negative.value).toFixed(1)} pts</span></div>}
+            </div>
+            {hist.length > 1 && (
+              <div className="card" style={{padding:'10px 12px'}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>SCORE TRAIL · LAST {hist.length} SCANS</div>
+                <svg width="100%" height="46" viewBox="0 0 250 44" preserveAspectRatio="none" style={{marginTop:8}}>
+                  <polyline points={pts} fill="none" stroke="var(--acid)" strokeWidth="2"/>
+                </svg>
+                <div style={{display:'flex',justifyContent:'space-between',fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)'}}>
+                  <span>{Math.min(...hist)}</span><span>{Math.max(...hist)}</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -530,7 +579,7 @@ function ElitePicks(){
   const [picks,setPicks] = useState(null);
   const [mbs,setMbs] = useState(null);
   const [err,setErr] = useState(null);
-  const [detail,setDetail] = useState(null);
+  const [explain,setExplain] = useState(null);
   useEffect(()=>{
     j('/api/picks?limit=20').then(setPicks).catch(e=>setErr(e.message));
     j('/api/mb-candidates?limit=100').then(setMbs).catch(()=>{});
@@ -552,7 +601,7 @@ function ElitePicks(){
               <tbody>
                 {picks.map(r=>(
                   <React.Fragment key={r.symbol}>
-                  <tr style={{cursor:'pointer'}} onClick={()=>setDetail(d=>d===r.symbol?null:r.symbol)}>
+                  <tr style={{cursor:'pointer'}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
                     <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td><Bucket b={r.mb_bucket}/></td>
@@ -566,7 +615,6 @@ function ElitePicks(){
                     <td className="num">{fmt(r.risk,0)}</td>
                     <td className="num">{fmt(r.accumulation,0)}</td>
                   </tr>
-                  {detail===r.symbol && <ContribRow r={r}/>}
                   </React.Fragment>
                 ))}
               </tbody>
@@ -611,6 +659,7 @@ function ElitePicks(){
           </div>
         )}
       </div>
+      {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
     </div>
   );
 }
@@ -656,6 +705,94 @@ function Discovery(){
         )}
         <div className="note" style={{marginTop:10}}>Discovery Score = 35% RS rank · 25% RS acceleration (1M−3M percentile) · 20% revision proxy · 20% momentum, dampened by data confidence. <b style={{color:'var(--gold)'}}>EMERGING</b> = RS accelerating and composite score rising.</div>
       </div>
+    </div>
+  );
+}
+
+/* ── RESEARCH (FACTOR + REGIME INTELLIGENCE) ─────────────────────────── */
+function Research(){
+  const [fdata,setFdata] = useState(null);
+  const [rdata,setRdata] = useState(null);
+  const [err,setErr] = useState(null);
+  const load = useCallback(()=>{
+    Promise.all([j('/api/research/factors'), j('/api/research/regimes')])
+      .then(([f,r])=>{ setFdata(f); setRdata(r); })
+      .catch(e=>setErr(e.message));
+  },[load]);
+  useEffect(load,[load]);
+  if (err && !fdata) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
+  if (!fdata || !rdata) return <Loader/>;
+  const factors = fdata.factors || [];
+  const decay = fdata.alpha_decay || [];
+  const regimes = rdata.regimes || [];
+  const counts = rdata.snapshot_counts || {};
+  const icColor = ic => ic >= 0.15 ? 'var(--acid)' : ic >= 0.05 ? 'var(--gold)' : 'var(--rose)';
+  return (
+    <div className="wrap anim">
+      <div><div className="screen-title">Research</div><div className="screen-sub">Which factors actually predict returns · per regime</div></div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Factor IC</span><span className="note">Spearman IC vs realized 30d forward returns · ranked</span></div>
+        {factors.length === 0 ? <div className="note">No measured signals yet — IC accrues after consecutive scans with elapsed price history.</div> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Factor</th><th className="num">Avg IC</th><th className="num">Last IC</th><th className="num">Signals</th></tr></thead>
+              <tbody>
+                {factors.map((f,i)=>(
+                  <tr key={f.factor}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
+                    <td><span style={{textTransform:'capitalize',fontWeight:600}}>{f.factor.replace('_',' ')}</span></td>
+                    <td className="num" style={{color:icColor(f.avg_ic),fontFamily:'var(--mono)',fontWeight:600}}>{f.avg_ic!=null ? Number(f.avg_ic).toFixed(3) : '—'}</td>
+                    <td className="num" style={{fontFamily:'var(--mono)'}}>{f.last_ic!=null ? Number(f.last_ic).toFixed(3) : '—'}</td>
+                    <td className="num" style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>{f.n}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid2">
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Alpha Decay</span><span className="note">avg forward return after signals</span></div>
+          {decay.length === 0 ? <div className="note">No measured signals yet — forward returns accrue as elapsed history builds.</div> : (
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              {decay.map(h=>(
+                <div key={h.horizon_days} style={{flex:'1 1 110px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10,padding:'10px 12px'}}>
+                  <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{h.horizon_days}d horizon</div>
+                  <div className={`num ${(h.avg_return_pct||0)>=0?'up':'dn'}`} style={{fontWeight:700,fontSize:15}}>{h.avg_return_pct!=null ? pct(h.avg_return_pct) : '—'}</div>
+                  <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginTop:3}}>hit {h.hit_rate_pct!=null ? fmt(h.hit_rate_pct,0)+'%' : '—'} · n={h.n!=null?h.n:0}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Regime Performance</span><span className="note">best factor per regime</span></div>
+          {regimes.length === 0 ? <div className="note">No regime-split IC yet — accrues with consecutive scans.</div> : (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {regimes.map(rg=>(
+                <div key={rg.regime} style={{background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10,padding:'10px 12px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+                    <span className={`regime-chip regime-${rg.regime}`}>{rg.regime}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{counts[rg.regime]!=null?counts[rg.regime]:0} snapshots</span>
+                  </div>
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
+                    {Object.entries(rg.factors||{}).map(([k,v])=>(
+                      <span key={k} style={{fontFamily:'var(--mono)',fontSize:9,padding:'2px 7px',borderRadius:4,background:k===rg.best_factor?'var(--acid-d)':'var(--bg0)',color:k===rg.best_factor?'var(--acid)':'var(--t2)',fontWeight:k===rg.best_factor?700:400}}>{k} {Number(v).toFixed(2)}</span>
+                    ))}
+                  </div>
+                  {rg.best_factor && <div style={{fontSize:9,color:'var(--acid)',fontFamily:'var(--mono)',marginTop:6}}>▲ best factor: {rg.best_factor}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="note" style={{opacity:0.7}}>Updated {fdata.updated ? new Date(fdata.updated).toLocaleString('en-IN') : '—'} · honest by design: empty until scans + elapsed history accumulate.</div>
     </div>
   );
 }
@@ -1088,6 +1225,7 @@ function App(){
         {tab==='Screener' && <Screener/>}
         {tab==='Elite Picks' && <ElitePicks/>}
         {tab==='Discovery' && <Discovery/>}
+        {tab==='Research' && <Research/>}
         {tab==='Portfolio' && <Portfolio/>}
         {tab==='Backtest' && <Backtest/>}
       </div>

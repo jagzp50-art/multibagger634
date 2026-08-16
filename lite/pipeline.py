@@ -1,5 +1,5 @@
 """
-Sovereign Lite v12 — scan pipeline.
+Sovereign Lite v13 — scan pipeline.
 
     fetch prices → persist → fetch fundamentals (cached) → regime detection
     → score all symbols → rank → multibagger detect → persist scores
