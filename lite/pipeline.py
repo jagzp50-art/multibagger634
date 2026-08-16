@@ -1,8 +1,13 @@
 """
-Sovereign Lite v7 — scan pipeline.
+Sovereign Lite v9 — scan pipeline.
 
     fetch prices → persist → fetch fundamentals (cached) → regime detection
     → score all symbols → rank → multibagger detect → persist scores
+
+Two tiers: `tier="core"` (curated ~155 names, daily) and
+`tier="discovery"` (NIFTY-500-style breadth, weekly) — both feed the same
+scoring/snapshots, so discovery names enter the research pool before they
+become obvious.
 """
 from __future__ import annotations
 
@@ -12,17 +17,19 @@ from datetime import date, datetime
 import pandas as pd
 
 from . import alpha, data, db, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring, watchlist
-from .universe import default_universe
+from .universe import default_universe, discovery_universe
 
 
-def run_scan(force_fundamentals: bool = False) -> dict:
+def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
     t0 = time.time()
-    symbols = db.universe_symbols()
+    tier = tier if tier in ("core", "discovery") else "core"
+    symbols = db.universe_symbols(tier=tier)
     if not symbols:
-        db.seed_universe(default_universe())
-        symbols = db.universe_symbols()
+        # Seed the tier on first use (core = curated list, discovery = broad list).
+        db.seed_universe(default_universe() if tier == "core" else discovery_universe(), tier=tier)
+        symbols = db.universe_symbols(tier=tier)
 
-    print(f"[lite] scan start: {len(symbols)} symbols")
+    print(f"[lite] scan start ({tier}): {len(symbols)} symbols")
     price_frames = data.fetch_prices(symbols)
     rows_persisted = data.persist_prices(price_frames)
     print(f"[lite] prices: {len(price_frames)} symbols, {rows_persisted} rows")
@@ -126,6 +133,7 @@ def run_scan(force_fundamentals: bool = False) -> dict:
     print(f"[lite] scan complete in {duration}s")
     return {
         "status": "ok",
+        "tier": tier,
         "scanned": len(symbols),
         "priced": len(price_frames),
         "scored": len(records),

@@ -199,16 +199,16 @@ function Dashboard(){
   const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); },[load]);
   useEffect(load,[load]);
 
-  const runScan = async (force)=>{
+  const runScan = async (force, tier='core')=>{
     setScanning(true); setScanResult(null);
-    try { const r = await j('/api/scan' + (force ? '?force=true' : ''), {method:'POST'}); setScanResult(r); load(); }
+    try { const r = await j(`/api/scan?tier=${tier}` + (force ? '&force=true' : ''), {method:'POST'}); setScanResult(r); load(); }
     catch(e){ setScanResult({error:e.message}); }
     finally { setScanning(false); }
   };
 
   if (err && !data) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
   if (!data) return <Loader/>;
-  const {regime, allocation, top_picks, universe_size, scored, last_scan_at} = data;
+  const {regime, allocation, top_picks, universe_size, universe_tiers, scored, last_scan_at} = data;
 
   return (
     <div className="wrap anim">
@@ -234,7 +234,7 @@ function Dashboard(){
           </div>
           <div className="note" style={{marginTop:12}}>{allocation.note}</div>
           <div className="status-line" style={{marginTop:14}}>
-            <span className="pulse-dot"/> {scored} of {universe_size} stocks scored {last_scan_at ? '· last scan ' + new Date(last_scan_at).toLocaleString() : '· no scan yet'}
+            <span className="pulse-dot"/> {scored} of {universe_size} stocks scored · {universe_tiers ? `core ${universe_tiers.core || 0} · discovery ${universe_tiers.discovery || 0}` : ''} {last_scan_at ? '· last scan ' + new Date(last_scan_at).toLocaleString() : '· no scan yet'}
           </div>
         </div>
       </div>
@@ -290,14 +290,15 @@ function Dashboard(){
         <div className="card-hdr">
           <span className="card-title">Top Picks</span>
           <div style={{display:'flex',gap:8}}>
-            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false)}>{scanning ? 'Scanning…' : '⟳ Run Scan'}</button>
-            <button className="btn" disabled={scanning} onClick={()=>runScan(true)}>{scanning ? 'Scanning…' : '⚡ Scan (force refresh)'}</button>
+            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false)}>{scanning ? 'Scanning…' : '⟳ Core Scan'}</button>
+            <button className="btn" disabled={scanning} onClick={()=>runScan(true)}>{scanning ? 'Scanning…' : '⚡ Force refresh'}</button>
+            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false,'discovery')}>{scanning ? 'Scanning…' : '🧭 Discovery Scan'}</button>
           </div>
         </div>
         {scanResult && (
           <div className="note" style={{marginBottom:10}}>
             {scanResult.error ? `Scan failed: ${scanResult.error}` :
-              `✓ ${scanResult.scored}/${scanResult.scanned} scored in ${scanResult.duration_sec}s · ${scanResult.fundamentals} fundamentals · regime ${scanResult.regime}`}
+              `✓ [${scanResult.tier || 'core'}] ${scanResult.scored}/${scanResult.scanned} scored in ${scanResult.duration_sec}s · ${scanResult.fundamentals} fundamentals · regime ${scanResult.regime}`}
           </div>
         )}
         {top_picks.length === 0 ? (
@@ -501,7 +502,7 @@ function ElitePicks(){
               <thead><tr>
                 <th className="num">MB Rank</th><th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Δ MB</th><th className="num">Rules</th>
                 <th className="num">Growth</th><th className="num">Quality</th><th className="num">Momentum</th>
-                <th className="num">Compounder</th><th className="num">Mkt Cap</th>
+                <th className="num">Compounder</th><th className="num">Reinvest</th><th className="num">Mkt Cap</th>
               </tr></thead>
               <tbody>
                 {mbs.slice(0,30).map(r=>(
@@ -520,6 +521,7 @@ function ElitePicks(){
                     <td className="num">{fmt(r.quality,0)}</td>
                     <td className="num">{fmt(r.momentum,0)}</td>
                     <td className="num">{fmt(r.compounder_score,0)}</td>
+                    <td className="num">{fmt(r.reinvestment_score,0)}</td>
                     <td className="num">{fmtCr(r.market_cap)}</td>
                   </tr>
                 ))}

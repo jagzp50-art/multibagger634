@@ -51,6 +51,21 @@ MB_WEIGHTS = {
 }
 
 
+def reinvestment_score(f: dict) -> Optional[float]:
+    """Reinvestment quality over 5 years — the plough-back engine behind
+    compounders: 40% sales CAGR · 40% profit CAGR · 20% ROCE consistency.
+    Many 50-baggers score highly here long before the price chart says so.
+    """
+    sales_cagr = scoring.sigmoid(f.get("sales_cagr_5y") * 100, 15, 10) if f.get("sales_cagr_5y") is not None else None
+    profit_cagr = scoring.sigmoid(f.get("profit_cagr_5y") * 100, 15, 12) if f.get("profit_cagr_5y") is not None else None
+    parts = [
+        (sales_cagr, 0.40),
+        (profit_cagr, 0.40),
+        (f.get("roce_stability"), 0.20),
+    ]
+    return scoring._weighted(parts)
+
+
 def compounder_score(f: dict) -> Optional[float]:
     """5-year compounding quality — the longevity a true multibagger needs:
 
@@ -129,6 +144,7 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
             debt = None
         valuation = scoring.valuation_score(f)
         compounder = compounder_score(f)
+        reinvest = reinvestment_score(f)
         parts = [
             (compounder, MB_WEIGHTS["compounder"]),
             (accel, MB_WEIGHTS["accel"]),
@@ -145,6 +161,7 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
         row = dict(r)
         row["mb_score"] = mb
         row["compounder_score"] = round(compounder, 1) if compounder is not None else None
+        row["reinvestment_score"] = round(reinvest, 1) if reinvest is not None else None
         row["mb_bucket"] = bucket_for(mb)
         row["mb_rules_passed"] = passed
         row["mb_rules_total"] = len(RULES)

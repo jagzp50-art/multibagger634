@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS stocks (
     name       TEXT,
     sector     TEXT,
     in_universe INTEGER DEFAULT 1,
+    tier       TEXT DEFAULT 'core',
     added_at   TEXT
 );
 CREATE TABLE IF NOT EXISTS prices (
@@ -255,6 +256,10 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
     try:
         conn.executescript(SCHEMA)
         # Lightweight migration: add columns added after the table existed.
+        # (stocks.tier is TEXT with a default; the generic helper adds REAL.)
+        stock_cols = {r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()}
+        if "tier" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN tier TEXT DEFAULT 'core'")
         _migrate_columns(
             conn,
             "fundamentals",
@@ -300,6 +305,7 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "compounder_score",
                 "data_confidence",
                 "factor_contributions",
+                "reinvestment_score",
             ],
         )
         _migrate_columns(
@@ -314,17 +320,18 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
         seed_universe(universe)
 
 
-def seed_universe(stocks: Iterable[dict]) -> None:
+def seed_universe(stocks: Iterable[dict], tier: str = "core") -> None:
     conn = get_connection()
     try:
         conn.executemany(
-            "INSERT OR IGNORE INTO stocks (symbol, name, sector, in_universe, added_at) "
-            "VALUES (:symbol, :name, :sector, 1, :added_at)",
+            "INSERT OR IGNORE INTO stocks (symbol, name, sector, in_universe, tier, added_at) "
+            "VALUES (:symbol, :name, :sector, 1, :tier, :added_at)",
             [
                 {
                     "symbol": s["symbol"],
                     "name": s.get("name", s["symbol"]),
                     "sector": s.get("sector", "Unknown"),
+                    "tier": tier,
                     "added_at": date.today().isoformat(),
                 }
                 for s in stocks
@@ -335,24 +342,42 @@ def seed_universe(stocks: Iterable[dict]) -> None:
         conn.close()
 
 
-def universe_symbols() -> list[str]:
+def universe_symbols(tier: Optional[str] = None) -> list[str]:
     conn = get_connection()
     try:
-        rows = conn.execute(
-            "SELECT symbol FROM stocks WHERE in_universe = 1 ORDER BY symbol"
-        ).fetchall()
+        if tier:
+            rows = conn.execute(
+                "SELECT symbol FROM stocks WHERE in_universe = 1 AND tier = ? ORDER BY symbol",
+                (tier,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT symbol FROM stocks WHERE in_universe = 1 ORDER BY symbol"
+            ).fetchall()
         return [r["symbol"] for r in rows]
     finally:
         conn.close()
 
 
-def add_stock(symbol: str, name: str = "", sector: str = "Unknown") -> None:
+def universe_tiers() -> dict[str, int]:
+    """Membership counts per tier (e.g. {'core': 155, 'discovery': 450})."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT tier, COUNT(*) AS n FROM stocks WHERE in_universe = 1 GROUP BY tier"
+        ).fetchall()
+        return {r["tier"] or "core": r["n"] for r in rows}
+    finally:
+        conn.close()
+
+
+def add_stock(symbol: str, name: str = "", sector: str = "Unknown", tier: str = "core") -> None:
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO stocks (symbol, name, sector, in_universe, added_at) "
-            "VALUES (?, ?, ?, 1, ?)",
-            (symbol, name, sector, date.today().isoformat()),
+            "INSERT OR IGNORE INTO stocks (symbol, name, sector, in_universe, tier, added_at) "
+            "VALUES (?, ?, ?, 1, ?, ?)",
+            (symbol, name, sector, tier, date.today().isoformat()),
         )
         conn.commit()
     finally:
@@ -522,9 +547,9 @@ def upsert_scores(records: Iterable[dict]) -> None:
              mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_1m, rs_3m,
              rs_6m, rs_12m, rs_boost, accumulation, pos_score, opp_score, sector_boost,
              trend_ok, institutional_quality, revision_score, compounder_score,
-             data_confidence, factor_contributions, updated_at)
+             reinvestment_score, data_confidence, factor_contributions, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -554,6 +579,7 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     _num(r.get("institutional_quality")),
                     _num(r.get("revision_score")),
                     _num(r.get("compounder_score")),
+                    _num(r.get("reinvestment_score")),
                     _num(r.get("data_confidence")),
                     json.dumps(r.get("factor_contributions") or {}),
                     datetime.now().isoformat(timespec="seconds"),
@@ -1068,6 +1094,16 @@ def load_factor_ic(limit: int = 200) -> list[dict]:
 
 
 # ── Survivorship bias + point-in-time history ──────────────────────────────
+
+def earliest_universe_snapshot() -> Optional[str]:
+    """First date we have a universe-membership snapshot for (PIT reference)."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT MIN(snapshot_date) FROM universe_history").fetchone()
+        return row[0] if row and row[0] else None
+    finally:
+        conn.close()
+
 
 def snapshot_universe(scan_date: str) -> int:
     """Store today's universe membership (survivorship-bias protection)."""

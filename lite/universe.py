@@ -1,12 +1,18 @@
 """
-Sovereign Lite v7 — curated NSE universe.
+Sovereign Lite v9 — two-tier curated NSE universe.
 
-A single-user scanner stays fast and rate-limit friendly, so we screen a
-curated ~100 name universe of large, mid and small caps instead of the full
-exchange. Add symbols via the dashboard (or the `add_stock` helper); every
-symbol is fetched through yfinance using its `.NS` suffix.
+  CORE      — ~155 curated large/mid/small caps (fast daily scan).
+  DISCOVERY — ~450 more names mined from the repo's broader NSE symbol list
+              (pro/ticker_list.py): NIFTY-500-style breadth for a slower
+              weekly scan, so multibaggers get found before they are obvious.
+
+Both tiers are fetched through yfinance using the `.NS` suffix. Add symbols
+via the dashboard (or the `add_stock` helper).
 """
 from __future__ import annotations
+
+import os
+import re
 
 # Liquid large + mid caps (NIFTY 50 core)
 LARGE = [
@@ -53,7 +59,7 @@ VIX_INDEX = "^INDIAVIX"      # India VIX
 
 
 def default_universe() -> list[dict]:
-    """Merged, de-duplicated universe of {symbol, name, sector} dicts."""
+    """Merged, de-duplicated CORE universe of {symbol, name, sector} dicts."""
     seen: set[str] = set()
     out: list[dict] = []
     for symbol in LARGE + MID:
@@ -62,4 +68,32 @@ def default_universe() -> list[dict]:
         seen.add(symbol)
         sector = "Large Cap" if symbol in LARGE else "Mid/Small Cap"
         out.append({"symbol": symbol, "name": symbol.replace(".NS", ""), "sector": sector})
+    return out
+
+
+def discovery_universe() -> list[dict]:
+    """DISCOVERY tier: broader NSE names (NIFTY-500 style breadth) not already
+    in the core universe, mined from the repo's `pro/ticker_list.py`.
+
+    Read at runtime (a plain data file, no pro/ imports) so Lite stays free of
+    the legacy stack; returns [] if the file is absent.
+    """
+    core = {s["symbol"] for s in default_universe()}
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pro", "ticker_list.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError:
+        return []
+    m = re.search(r"TICKERS\s*=\s*\[(.*?)\]", src, re.S)
+    if not m:
+        return []
+    symbols = re.findall(r'"([A-Z0-9.\-]+\.(?:NS|BO))"', m.group(1))
+    out: list[dict] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        if symbol in core or symbol in seen:
+            continue
+        seen.add(symbol)
+        out.append({"symbol": symbol, "name": symbol.replace(".NS", "").replace(".BO", ""), "sector": "Discovery"})
     return out

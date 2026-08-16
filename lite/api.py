@@ -150,6 +150,7 @@ def create_app() -> FastAPI:
                 "watchlist": watch_events,
                 "top_picks": picks,
                 "universe_size": len(db.universe_symbols()),
+                "universe_tiers": db.universe_tiers(),
                 "scored": len(scores),
                 "last_scan_at": last_scan.get("updated_at") if last_scan else None,
                 "last_scan_regime": last_scan.get("regime") if last_scan else None,
@@ -292,11 +293,11 @@ def create_app() -> FastAPI:
     # ── Scan ─────────────────────────────────────────────────────────────────
 
     @app.post("/api/scan")
-    def scan(force: bool = False):
+    def scan(force: bool = False, tier: str = "core"):
         if not _scan_lock.acquire(blocking=False):
             return {"status": "running", "message": "A scan is already in progress."}
         try:
-            return _json_safe(run_scan(force_fundamentals=force))
+            return _json_safe(run_scan(force_fundamentals=force, tier=tier))
         finally:
             _scan_lock.release()
 
@@ -361,12 +362,15 @@ def create_app() -> FastAPI:
         return {"symbol": symbol, "error": "No data for symbol"}
 
     @app.get("/api/universe")
-    def universe():
+    def universe(tier: Optional[str] = None):
         return _json_safe(
-            [
-                {"symbol": s, "name": s.replace(".NS", ""), "sector": "Large Cap" if s in _LARGE else "Mid/Small Cap"}
-                for s in db.universe_symbols()
-            ]
+            {
+                "tiers": db.universe_tiers(),
+                "symbols": [
+                    {"symbol": s, "name": s.replace(".NS", ""), "sector": "Large Cap" if s in _LARGE else "Mid/Small Cap"}
+                    for s in db.universe_symbols(tier=tier if tier in ("core", "discovery") else None)
+                ],
+            }
         )
 
     @app.post("/api/universe")

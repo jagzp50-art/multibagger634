@@ -217,6 +217,7 @@ def run_backtest(
     summary["cost_model"] = cost_model
     summary["total_costs"] = round(costs_total, 2)
     summary["cost_drag_pct"] = round(costs_total / initial * 100, 2) if initial else 0.0
+    summary["pit_snapshots_from"] = db.earliest_universe_snapshot()
 
     # Universe equal-weight benchmark: the average member of the candidate pool.
     # The model must beat its own universe, not just a stored index.
@@ -296,6 +297,7 @@ def walk_forward(
             "Run a scan after 5y of prices are fetched.",
         )
 
+    pit_from = db.earliest_universe_snapshot()
     fold_results = []
     for i in range(folds):
         test_end = n_bars - i * fold_days
@@ -320,10 +322,15 @@ def walk_forward(
             continue
         start_label = aligned.index[test_start].date().isoformat()
         end_label = aligned.index[test_end - 1].date().isoformat()
+        # Survivorship-aware fold universe: names with price history before the
+        # fold (recent listings / new tier additions can't trade early folds).
+        listed_before = sum(1 for sym in aligned.columns if frames[sym].index[0] <= aligned.index[test_start])
         fold_results.append(
             {
                 "fold": i + 1,
                 "window": f"{start_label} → {end_label}",
+                "universe_size": listed_before,
+                "pre_pit": bool(pit_from) and start_label < pit_from,
                 "net_return_pct": sm.get("net_return_pct"),
                 "cagr_pct": sm.get("cagr_pct"),
                 "max_drawdown_pct": sm.get("max_drawdown_pct"),
@@ -342,9 +349,12 @@ def walk_forward(
     sharpes = [f["sharpe"] for f in fold_results if f["sharpe"] is not None]
     win_rates = [f["win_rate_pct"] for f in fold_results if f["win_rate_pct"] is not None]
 
+    pre_pit = [f for f in fold_results if f.get("pre_pit")]
     summary = {
         "folds_evaluated": len(fold_results),
         "fold_months": fold_months,
+        "pit_snapshots_from": pit_from,
+        "pre_pit_folds": len(pre_pit),
         "avg_return_pct": round(sum(returns) / len(returns), 2) if returns else None,
         "hit_rate_pct": round(sum(1 for r in returns if r > 0) / len(returns) * 100, 1) if returns else None,
         "avg_cagr_pct": round(sum(cagrs) / len(cagrs), 2) if cagrs else None,

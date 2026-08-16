@@ -1,6 +1,6 @@
 """
-Unit tests for Sovereign Lite v8 (lite/scoring, lite/regime, lite/multibagger,
-lite/portfolio, lite/backtest, lite/breadth, lite/db).
+Unit tests for Sovereign Lite v9 (lite/scoring, lite/regime, lite/multibagger,
+lite/portfolio, lite/backtest, lite/breadth, lite/db, lite/universe).
 
 Run:  python3 -m pytest tests/test_lite_scoring.py -q
 """
@@ -802,3 +802,101 @@ def test_pit_universe_and_fundamentals_snapshots(tmp_path, monkeypatch):
     assert hist[0]["roe"] == 25.0
     assert hist[0]["accrual_ratio"] == pytest.approx(0.05, abs=1e-9)
     assert hist[0]["data_confidence"] == 92.0
+
+
+# ── v9: Two-tier universe (Core + Discovery) ────────────────────────────────
+
+def test_discovery_universe_mines_broad_list():
+    from lite.universe import default_universe, discovery_universe
+
+    core = default_universe()
+    disc = discovery_universe()
+    assert len(core) > 100
+    assert len(disc) > 300  # NIFTY-500-style breadth beyond the curated core
+    core_syms = {s["symbol"] for s in core}
+    disc_syms = {s["symbol"] for s in disc}
+    assert not (core_syms & disc_syms)  # no overlap — deduped against core
+    assert all(s.endswith(".NS") for s in disc_syms)
+
+
+def test_universe_tiers_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "tiers.db"))
+    db_mod.init_db()
+    db_mod.seed_universe([{"symbol": "A.NS", "name": "A", "sector": "Tech"}], tier="core")
+    db_mod.seed_universe(
+        [{"symbol": "Z1.NS", "name": "Z1", "sector": "Discovery"},
+         {"symbol": "Z2.NS", "name": "Z2", "sector": "Discovery"}],
+        tier="discovery",
+    )
+    assert db_mod.universe_symbols(tier="core") == ["A.NS"]
+    assert sorted(db_mod.universe_symbols(tier="discovery")) == ["Z1.NS", "Z2.NS"]
+    assert sorted(db_mod.universe_symbols()) == ["A.NS", "Z1.NS", "Z2.NS"]
+    tiers = db_mod.universe_tiers()
+    assert tiers["core"] == 1 and tiers["discovery"] == 2
+    db_mod.add_stock("Z3.NS", tier="discovery")
+    assert db_mod.universe_tiers()["discovery"] == 3
+
+
+def test_earliest_universe_snapshot(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "pit2.db"))
+    db_mod.init_db()
+    assert db_mod.earliest_universe_snapshot() is None
+    db_mod.seed_universe([{"symbol": "A.NS", "name": "A", "sector": "Tech"}])
+    db_mod.snapshot_universe("2026-08-15")
+    db_mod.snapshot_universe("2026-08-16")
+    assert db_mod.earliest_universe_snapshot() == "2026-08-15"
+
+
+# ── v9: Reinvestment score ──────────────────────────────────────────────────
+
+def test_reinvestment_score_ranks_compounders():
+    from lite import multibagger
+
+    good = {"sales_cagr_5y": 0.22, "profit_cagr_5y": 0.25, "roce_stability": 88.0}
+    bad = {"sales_cagr_5y": 0.03, "profit_cagr_5y": 0.02, "roce_stability": 30.0}
+    assert multibagger.reinvestment_score(good) > multibagger.reinvestment_score(bad) + 30
+    assert multibagger.reinvestment_score({"roce_stability": 80.0}) is not None  # None-safe
+    assert multibagger.reinvestment_score({}) is None
+
+
+def test_detect_attaches_reinvestment_score():
+    from lite import multibagger
+
+    out = multibagger.detect(
+        [{"symbol": "A.NS", "score": 70.0, "rs_rank": 80.0}],
+        {"A.NS": {"sales_cagr_5y": 0.2, "profit_cagr_5y": 0.24, "roce_stability": 85.0, "sector": "Tech"}},
+        {},
+    )
+    assert out[0]["reinvestment_score"] is not None
+    assert "reinvestment_score" in out[0]
+
+
+# ── v9: PIT-universe stats in walk-forward ──────────────────────────────────
+
+def test_walk_forward_reports_pit_and_universe(tmp_path, monkeypatch):
+    import lite.db as db_mod
+    from lite import backtest
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "wfp.db"))
+    db_mod.init_db()
+    db_mod.seed_universe([{"symbol": "A.NS", "name": "A", "sector": "Tech"}])
+    db_mod.snapshot_universe("2026-01-15")  # PIT snapshots only exist from 2026
+
+    idx = pd.date_range("2022-01-01", periods=1100, freq="B")
+    n = len(idx)
+    up = pd.Series([100 * (1.0008 ** i) for i in range(n)], index=idx)
+    flat = pd.Series([100.0] * n, index=idx)
+    res = backtest.walk_forward(
+        {"UP.NS": pd.DataFrame({"close": up}), "FLAT.NS": pd.DataFrame({"close": flat})},
+        {"folds": 3, "fold_months": 12, "top_n": 1},
+    )
+    assert res["folds"], res.get("summary")
+    assert res["summary"]["pit_snapshots_from"] == "2026-01-15"
+    assert res["summary"]["pre_pit_folds"] == len(res["folds"])  # all folds precede 2026
+    for f in res["folds"]:
+        assert f["universe_size"] == 2
+        assert f["pre_pit"] is True
