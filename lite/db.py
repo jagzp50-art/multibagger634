@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     earnings_vol    REAL,
     sales_vol       REAL,
     cfo_pat_ratio   REAL,
-    cfo_growth      REAL
+    cfo_growth      REAL,
+    accrual_ratio   REAL
 );
 CREATE TABLE IF NOT EXISTS scores (
     symbol   TEXT PRIMARY KEY,
@@ -198,6 +199,37 @@ CREATE TABLE IF NOT EXISTS factor_ic (
     created_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_factor_ic ON factor_ic (scan_date, factor);
+CREATE TABLE IF NOT EXISTS universe_history (
+    snapshot_date TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    name          TEXT,
+    sector        TEXT,
+    PRIMARY KEY (snapshot_date, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_universe_history ON universe_history (snapshot_date);
+CREATE TABLE IF NOT EXISTS fundamentals_history (
+    scan_date      TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    roe            REAL,
+    roce           REAL,
+    debt_equity    REAL,
+    sales_growth   REAL,
+    profit_growth  REAL,
+    pe             REAL,
+    pb             REAL,
+    fcf_margin     REAL,
+    eps_growth     REAL,
+    eps_accel      REAL,
+    margin_expansion REAL,
+    rev_accel      REAL,
+    pat_accel      REAL,
+    cfo_pat_ratio  REAL,
+    cfo_growth     REAL,
+    accrual_ratio  REAL,
+    data_confidence REAL,
+    PRIMARY KEY (scan_date, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_history ON fundamentals_history (symbol, scan_date);
 """
 
 
@@ -246,6 +278,7 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "sales_vol",
                 "cfo_pat_ratio",
                 "cfo_growth",
+                "accrual_ratio",
             ],
         )
         _migrate_columns(
@@ -400,9 +433,9 @@ def upsert_fundamentals(f: dict) -> None:
              data_confidence, roe_stability, roce_stability, profit_stability,
              sales_stability, margin_stability, fcf_stability, sales_cagr_5y,
              profit_cagr_5y, fcf_cagr_5y, debt_trend, revenue_accel_annual,
-             earnings_vol, sales_vol, cfo_pat_ratio, cfo_growth)
+             earnings_vol, sales_vol, cfo_pat_ratio, cfo_growth, accrual_ratio)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f.get("symbol"),
@@ -441,6 +474,7 @@ def upsert_fundamentals(f: dict) -> None:
                 _num(f.get("sales_vol")),
                 _num(f.get("cfo_pat_ratio")),
                 _num(f.get("cfo_growth")),
+                _num(f.get("accrual_ratio")),
             ),
         )
         conn.commit()
@@ -1027,6 +1061,78 @@ def load_factor_ic(limit: int = 200) -> list[dict]:
             "SELECT scan_date, factor, horizon_days, ic, regime, n, created_at "
             "FROM factor_ic ORDER BY id DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
+# ── Survivorship bias + point-in-time history ──────────────────────────────
+
+def snapshot_universe(scan_date: str) -> int:
+    """Store today's universe membership (survivorship-bias protection)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, name, sector FROM stocks WHERE in_universe = 1"
+        ).fetchall()
+        conn.executemany(
+            "INSERT OR REPLACE INTO universe_history (snapshot_date, symbol, name, sector) "
+            "VALUES (?, ?, ?, ?)",
+            [(scan_date, r["symbol"], r["name"], r["sector"]) for r in rows],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def universe_history_snapshots(limit: int = 30) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT snapshot_date, COUNT(*) AS members FROM universe_history "
+            "GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def snapshot_fundamentals_history(scan_date: str) -> int:
+    """Point-in-time copy of the fundamentals table for this scan.
+
+    Backtests and factor research can later read fundamentals *as they were
+    known on each scan date* — never today's ROE for a 2021 test.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, roe, roce, debt_equity, sales_growth, profit_growth, pe, pb, "
+            "fcf_margin, eps_growth, eps_accel, margin_expansion, rev_accel, pat_accel, "
+            "cfo_pat_ratio, cfo_growth, accrual_ratio, data_confidence FROM fundamentals"
+        ).fetchall()
+        conn.executemany(
+            "INSERT OR REPLACE INTO fundamentals_history "
+            "(scan_date, symbol, roe, roce, debt_equity, sales_growth, profit_growth, pe, pb, "
+            "fcf_margin, eps_growth, eps_accel, margin_expansion, rev_accel, pat_accel, "
+            "cfo_pat_ratio, cfo_growth, accrual_ratio, data_confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(scan_date, *[r[k] for k in r.keys()]) for r in rows],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def fundamentals_history_for(symbol: str, limit: int = 20) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM fundamentals_history WHERE symbol = ? ORDER BY scan_date DESC LIMIT ?",
+            (symbol, limit),
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
     finally:

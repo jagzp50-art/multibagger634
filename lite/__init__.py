@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — a single-user, SQLite + yFinance-only NSE stock platform.
+Sovereign Lite v8 — a single-user, SQLite + yFinance-only NSE stock platform.
 
 Phases:
   1. Data layer: 5 SQLite tables, one data source (yfinance)

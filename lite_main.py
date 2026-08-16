@@ -16,5 +16,5 @@ if __name__ == "__main__":
 
     port = int(os.getenv("API_PORT") or os.getenv("PORT") or 9005)
     host = os.getenv("API_HOST", "0.0.0.0")
-    print(f"[lite] Sovereign Lite v7 — http://{host}:{port}")
+    print(f"[lite] Sovereign Lite v8 — http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")

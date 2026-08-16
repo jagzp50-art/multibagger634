@@ -1,10 +1,14 @@
 """
-Sovereign Lite v7 — portfolio construction layer.
+Sovereign Lite v8 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
-(higher = better). Allocation weights are rank-based: the #1 position gets
-the largest slice of the regime's equity allocation, tapering linearly —
-top conviction gets the most capital, no equal-weighting.
+(higher = better). Allocation weights are conviction-based: the #1 position
+gets the largest slice of the regime's equity allocation — top conviction
+gets the most capital, no equal-weighting.
+
+v8: Kelly-Lite 2.0 adds a drawdown penalty (low vol alone isn't enough — a
+stock with catastrophic drawdowns gets penalized), allocation enforces a hard
+sector cap (no 45% Financials book), and factor_exposure() surfaces crowding.
 
 All inputs degrade to None-safe math via `scoring._weighted`.
 """
@@ -40,10 +44,10 @@ def attach_position_scores(records: list[dict]) -> list[dict]:
 
 
 def _kelly_lite(r: dict) -> float:
-    """Kelly-Lite conviction: score · quality · (1/volatility), normalized.
+    """Kelly-Lite 2.0: score · quality · (1/volatility) · drawdown penalty.
 
-    High quality + low volatility + strong RS deserve more capital than an
-    equally-scored but volatile, low-quality name.
+    Low volatility alone isn't enough — a stock with low vol but catastrophic
+    drawdowns gets penalized via its max drawdown (a −50% DD halves it).
     """
     pos = r.get("pos_score") or 0.0
     q = (r.get("quality") or 50.0) / 100.0
@@ -51,7 +55,83 @@ def _kelly_lite(r: dict) -> float:
     if vol is None or vol <= 0:
         vol = 0.30
     vol_factor = 0.15 / (0.15 + vol)
-    return max(0.0, pos * q * vol_factor)
+    mdd = r.get("max_dd")
+    dd_factor = 1.0
+    if mdd is not None:
+        depth = min(1.0, max(0.0, -float(mdd)))  # 0..1 drawdown depth
+        dd_factor = max(0.05, min(1.0, 1.0 - depth / 0.5))
+    return max(0.0, pos * q * vol_factor * dd_factor)
+
+
+def _enforce_sector_caps(alloc: list[dict], cap_pct: float) -> list[dict]:
+    """Trim any sector above `cap_pct`, redistributing the excess to
+    under-cap sectors (up to their headroom). A 45% Financials book never
+    happens; if the cap is infeasible (e.g. two sectors, 60% total, 25% cap)
+    the un-placeable excess is left in cash rather than oscillating.
+    """
+    if cap_pct <= 0 or cap_pct >= 100:
+        return alloc
+    for _ in range(50):
+        by_sector: dict[str, float] = {}
+        for a in alloc:
+            by_sector[a["sector"]] = by_sector.get(a["sector"], 0.0) + a["weight_pct"]
+        over = {s: w for s, w in by_sector.items() if w > cap_pct}
+        if not over:
+            break
+        excess = sum(w - cap_pct for w in over.values())
+        under = {s: w for s, w in by_sector.items() if w < cap_pct}
+        headroom = sum(cap_pct - w for w in under.values())
+        give = min(excess, headroom)
+        # Trim over-cap sectors to the cap (removes `excess` in total).
+        for a in alloc:
+            s = a["sector"]
+            if s in over:
+                trim = (by_sector[s] - cap_pct) * (a["weight_pct"] / by_sector[s])
+                a["weight_pct"] = round(a["weight_pct"] - trim, 2)
+        # Redistribute `give` in total across under-cap names, proportional to
+        # their current weights (so a sector with several names splits it).
+        under_names = [a for a in alloc if a["sector"] in under]
+        under_weight_total = sum(a["weight_pct"] for a in under_names)
+        if under_weight_total > 0:
+            for a in under_names:
+                a["weight_pct"] = round(
+                    a["weight_pct"] + give * (a["weight_pct"] / under_weight_total), 2
+                )
+        # New total = old − excess + give; anything the caps couldn't absorb
+        # (give < excess) is simply left in cash — no oscillation, no double-count.
+        if give < excess:
+            break
+    return alloc
+
+
+def sector_weights(alloc: list[dict]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for a in alloc:
+        out[a["sector"]] = round(out.get(a["sector"], 0.0) + a["weight_pct"], 2)
+    return out
+
+
+def factor_exposure(alloc: list[dict], records_by_symbol: dict[str, dict]) -> dict:
+    """Portfolio-weighted average factor scores + concentration readout.
+
+    A book that is 80% momentum is a crowding risk — surface it.
+    """
+    factors = ("quality", "growth", "momentum", "valuation", "risk", "mb_score", "rs_rank")
+    out: dict = {}
+    for f in factors:
+        num = den = 0.0
+        for a in alloc:
+            v = (records_by_symbol.get(a["symbol"]) or {}).get(f)
+            if v is not None:
+                num += v * a["weight_pct"]
+                den += a["weight_pct"]
+        out[f] = round(num / den, 1) if den > 0 else None
+    comp = {k: v for k, v in out.items() if v is not None and k in ("quality", "growth", "momentum", "valuation", "risk")}
+    if comp:
+        top = max(comp, key=comp.get)
+        out["top_factor"] = top
+        out["top_factor_share"] = round(comp[top] / sum(comp.values()) * 100, 1)
+    return out
 
 
 def build_allocation(
@@ -59,13 +139,13 @@ def build_allocation(
     equity_pct: float,
     top_n: int = 8,
     mode: str = "kelly",
+    max_sector_weight: float = 25.0,
 ) -> list[dict]:
     """Conviction-weighted allocation over the top-N by position score.
 
-    mode="kelly" (default): weight ∝ pos_score · quality · 1/vol — high
-    quality, low volatility, strong RS get the largest slices.
+    mode="kelly" (default): weight ∝ pos_score · quality · 1/vol · DD-penalty.
     mode="conviction": weight ∝ pos_score² — pure score tapering.
-    Both normalize so the book sums to equity_pct.
+    Both normalize to equity_pct, then enforce `max_sector_weight`.
     """
     ranked = sorted(
         [r for r in records if r.get("pos_score") is not None],
@@ -85,11 +165,12 @@ def build_allocation(
             {
                 "symbol": r.get("symbol"),
                 "name": r.get("name") or r.get("symbol"),
-                "sector": r.get("sector"),
+                "sector": r.get("sector") or "Unknown",
                 "pos_score": r.get("pos_score"),
                 "mb_bucket": r.get("mb_bucket"),
                 "weight_pct": round(w, 2),
                 "mode": mode,
             }
         )
+    out = _enforce_sector_caps(out, float(max_sector_weight))
     return out

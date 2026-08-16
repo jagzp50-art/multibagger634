@@ -31,6 +31,13 @@ def run_scan(force_fundamentals: bool = False) -> dict:
     fundas_list = [f for f in fundas.values() if f.get("symbol")]
     print(f"[lite] fundamentals: {len(fundas_list)} symbols")
 
+    # Survivorship-bias + point-in-time snapshots for this scan date.
+    try:
+        db.snapshot_universe(date.today().isoformat())
+        db.snapshot_fundamentals_history(date.today().isoformat())
+    except Exception as exc:
+        print(f"  ⚠️ PIT snapshot failed: {exc}")
+
     # Reload full history from SQLite with indicators attached
     px_frames: dict[str, pd.DataFrame] = {}
     for sym in symbols:

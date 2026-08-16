@@ -26,7 +26,32 @@ DEFAULT_PARAMS = {
     "top_n": 10,
     "initial_capital": 1_000_000,  # ₹10L
     "trailing_stop_pct": 0.20,
+    "cost_pct": 0.25,  # per-side transaction cost floor (%)
 }
+
+
+def _cost_breakdown(total_pct: float) -> dict:
+    """Indian-market cost stack for one side of a trade (delivery):
+
+      STT 0.10% + brokerage 0.03% + GST 18% on brokerage + SEBI fee,
+      plus slippage; the total is floored at the configured `cost_pct`.
+      Without this, backtest CAGR is overstated.
+    """
+    stt = 0.10
+    sebi = 0.0001
+    brokerage = 0.03
+    gst = round(brokerage * 0.18, 4)
+    base = stt + brokerage + gst + sebi
+    total = max(float(total_pct), base)
+    slippage = max(0.0, round(total - base, 4))
+    return {
+        "slippage_pct": slippage,
+        "brokerage_pct": brokerage,
+        "stt_pct": stt,
+        "gst_pct": gst,
+        "sebi_pct": sebi,
+        "total_per_side_pct": round(total, 4),
+    }
 
 
 def run_backtest(
@@ -38,6 +63,9 @@ def run_backtest(
     top_n = max(1, int(p.get("top_n", 10)))
     initial = float(p.get("initial_capital", 1_000_000))
     stop = float(p.get("trailing_stop_pct", 0.20))
+    cost_pct = float(p.get("cost_pct", 0.25))
+    cost_model = _cost_breakdown(cost_pct)
+    cost = cost_model["total_per_side_pct"] / 100.0
 
     # Align all series on a common trading calendar.
     frames = {}
@@ -50,9 +78,18 @@ def run_backtest(
     if not frames:
         return _empty_result(p, "Not enough price history stored. Run a scan first.")
 
-    aligned = pd.concat(frames, axis=1).sort_index().ffill()
-    end_date = aligned.index[-1]
+    warnings: list[str] = []
+    aligned_all = pd.concat(frames, axis=1).sort_index()
+    end_date = aligned_all.index[-1]
     start_date = end_date - pd.DateOffset(years=years)
+    # Survivorship guard: a name with no real history *before* the window
+    # would otherwise be backfilled by ffill — survivorship bias in disguise
+    # (recent listings / newly-added names can't participate in early years).
+    survivors = [sym for sym in frames if frames[sym].index[0] < start_date - pd.Timedelta(days=21)]
+    dropped = [sym for sym in frames if sym not in survivors]
+    if dropped:
+        warnings.append(f"Excluded {len(dropped)} symbol(s) with no pre-window history (survivorship guard).")
+    aligned = aligned_all[[s for s in survivors if s in aligned_all.columns]].ffill()
     aligned = aligned[aligned.index >= start_date]
     if len(aligned) < 60:
         return _empty_result(p, "Not enough history in the requested window.")
@@ -76,6 +113,7 @@ def run_backtest(
     daily_equity = []
     buy_notional = 0.0
     sell_notional = 0.0
+    costs_total = 0.0
 
     for i in range(1, len(closes)):
         day = closes.index[i]
@@ -91,17 +129,21 @@ def run_backtest(
             pos["peak"] = max(pos["peak"], px)
             # Trailing stop
             if pos["peak"] * (1 - stop) > px:
-                proceeds = pos["shares"] * px
-                cash += proceeds
-                sell_notional += proceeds
-                trades.append(_trade(pos, sym, day, px, "trailing_stop"))
+                notional = pos["shares"] * px
+                fee = notional * cost
+                cash += notional - fee
+                costs_total += fee
+                sell_notional += notional
+                trades.append(_trade(pos, sym, day, px, "trailing_stop", cost))
                 del holdings[sym]
             # 50-DMA exit
             elif sma50.loc[day, sym] is not None and not pd.isna(sma50.loc[day, sym]) and px < sma50.loc[day, sym]:
-                proceeds = pos["shares"] * px
-                cash += proceeds
-                sell_notional += proceeds
-                trades.append(_trade(pos, sym, day, px, "sma50_break"))
+                notional = pos["shares"] * px
+                fee = notional * cost
+                cash += notional - fee
+                costs_total += fee
+                sell_notional += notional
+                trades.append(_trade(pos, sym, day, px, "sma50_break", cost))
                 del holdings[sym]
 
         daily_equity.append(day_equity)
@@ -133,10 +175,12 @@ def run_backtest(
                 if sym not in picks:
                     px = closes.loc[day, sym]
                     if px is not None and not pd.isna(px):
-                        proceeds = holdings[sym]["shares"] * px
-                        cash += proceeds
-                        sell_notional += proceeds
-                        trades.append(_trade(holdings[sym], sym, day, px, "rebalance"))
+                        notional = holdings[sym]["shares"] * px
+                        fee = notional * cost
+                        cash += notional - fee
+                        costs_total += fee
+                        sell_notional += notional
+                        trades.append(_trade(holdings[sym], sym, day, px, "rebalance", cost))
                     del holdings[sym]
 
             # Deploy cash into picks, equal weight
@@ -146,26 +190,33 @@ def run_backtest(
                     px = closes.loc[day, sym]
                     if px is None or pd.isna(px) or px <= 0:
                         continue
-                    shares = math.floor(budget / px)
+                    shares = math.floor(budget / (1 + cost) / px)
                     if shares <= 0:
                         continue
-                    cost = shares * px
-                    cash -= cost
-                    buy_notional += cost
+                    notional = shares * px
+                    fee = notional * cost
+                    cash -= notional + fee
+                    costs_total += fee
+                    buy_notional += notional
                     holdings[sym] = {"shares": shares, "entry": px, "peak": px, "entry_date": day.date().isoformat()}
 
     # Close remaining positions at the end
     for sym in list(holdings.keys()):
         px = closes.iloc[-1][sym]
         if px is not None and not pd.isna(px):
-            proceeds = holdings[sym]["shares"] * px
-            cash += proceeds
-            sell_notional += proceeds
-            trades.append(_trade(holdings[sym], sym, closes.index[-1], px, "end"))
+            notional = holdings[sym]["shares"] * px
+            fee = notional * cost
+            cash += notional - fee
+            costs_total += fee
+            sell_notional += notional
+            trades.append(_trade(holdings[sym], sym, closes.index[-1], px, "end", cost))
 
     final = cash
     equity_series = pd.Series([p["equity"] for p in curve])
     summary = _summary(initial, final, equity_series, trades, len(rebalance_dates) - 1, buy_notional, sell_notional)
+    summary["cost_model"] = cost_model
+    summary["total_costs"] = round(costs_total, 2)
+    summary["cost_drag_pct"] = round(costs_total / initial * 100, 2) if initial else 0.0
 
     # Universe equal-weight benchmark: the average member of the candidate pool.
     # The model must beat its own universe, not just a stored index.
@@ -201,7 +252,7 @@ def run_backtest(
         "universe_curve": universe_curve,
         "trades": trades,
         "summary": summary,
-        "warnings": [],
+        "warnings": warnings,
     }
 
 
@@ -256,7 +307,13 @@ def walk_forward(
         }
         res = run_backtest(
             sub,
-            {"years": 1, "top_n": top_n, "initial_capital": initial, "trailing_stop_pct": stop},
+            {
+                "years": 1,
+                "top_n": top_n,
+                "initial_capital": initial,
+                "trailing_stop_pct": stop,
+                "cost_pct": float(p.get("cost_pct", 0.25)),
+            },
         )
         sm = res.get("summary") or {}
         if sm.get("error"):
@@ -309,14 +366,18 @@ def _ret(series: pd.Series, days: int) -> float | None:
     return float(end / start - 1)
 
 
-def _trade(pos: dict, symbol: str, day, price: float, reason: str) -> dict:
+def _trade(pos: dict, symbol: str, day, price: float, reason: str, cost: float = 0.0) -> dict:
+    entry = pos["entry"]
+    # Net of transaction costs on both sides (entry+exit notional).
+    net_return = ((price * (1 - cost)) - (entry * (1 + cost))) / (entry * (1 + cost)) * 100
     return {
         "symbol": symbol,
         "exit_date": day.date().isoformat(),
         "entry_date": pos.get("entry_date"),
         "exit_price": round(price, 2),
-        "entry_price": round(pos["entry"], 2),
-        "return_pct": round((price / pos["entry"] - 1) * 100, 2),
+        "entry_price": round(entry, 2),
+        "return_pct": round(net_return, 2),
+        "cost_pct": round(cost * 100, 3),
         "shares": pos.get("shares"),
         "reason": reason,
     }

@@ -60,7 +60,7 @@ def _recent_watchlist(limit: int = 10) -> list[dict]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Sovereign Lite v7", version="7.0.0")
+    app = FastAPI(title="Sovereign Lite v8", version="8.0.0")
 
     db.init_db(default_universe())
 
@@ -72,7 +72,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "7.0.0", "engine": "sovereign-lite"}
+        return {"status": "ok", "version": "8.0.0", "engine": "sovereign-lite"}
 
     # ── Regime ───────────────────────────────────────────────────────────────
 
@@ -259,19 +259,23 @@ def create_app() -> FastAPI:
         return _json_safe(out)
 
     @app.get("/api/portfolio")
-    def portfolio_endpoint(top_n: int = 8, mode: str = "kelly"):
+    def portfolio_endpoint(top_n: int = 8, mode: str = "kelly", max_sector_weight: float = 25.0):
         regime = _fresh_regime()
         scores = db.load_scores()
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
         rows = _merge(scores, fundas)
         equity_pct = float(regime.get("allocation", {}).get("equity", 60))
-        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n, mode=mode)
+        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n, mode=mode, max_sector_weight=max_sector_weight)
+        records_by_symbol = {r["symbol"]: r for r in rows}
         return _json_safe(
             {
                 "regime": regime.get("regime"),
                 "equity_pct": equity_pct,
                 "allocation": alloc,
                 "mode": mode,
+                "max_sector_weight": max_sector_weight,
+                "sector_weights": portfolio.sector_weights(alloc),
+                "factor_exposure": portfolio.factor_exposure(alloc, records_by_symbol),
             }
         )
 
@@ -335,6 +339,16 @@ def create_app() -> FastAPI:
         return _json_safe(db.load_backtests(limit=limit))
 
     # ── Portfolio helpers ────────────────────────────────────────────────────
+
+    @app.get("/api/fundamentals-history/{symbol}")
+    def fundamentals_history(symbol: str, limit: int = 20):
+        """Point-in-time fundamentals as known on each past scan date."""
+        return _json_safe(db.fundamentals_history_for(symbol, limit=max(1, min(limit, 100))))
+
+    @app.get("/api/universe-history")
+    def universe_history():
+        """Universe membership snapshots (survivorship-bias protection)."""
+        return _json_safe(db.universe_history_snapshots(limit=60))
 
     @app.get("/api/quote/{symbol}")
     def quote(symbol: str):

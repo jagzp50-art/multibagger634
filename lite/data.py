@@ -410,6 +410,7 @@ def _financial_history(symbol: str) -> dict:
         "sales_vol": None,
         "cfo_pat_ratio": None,
         "cfo_growth": None,
+        "accrual_ratio": None,
         "_rows": [],
     }
     try:
@@ -425,6 +426,7 @@ def _financial_history(symbol: str) -> dict:
             return out
         bs = ticker.balance_sheet
         equity = _stmt_row(bs, "Stockholders Equity") or _stmt_row(bs, "Common Stock Equity")
+        assets = _stmt_row(bs, "Total Assets")
         debt = _stmt_row(bs, "Total Debt") or _combine_rows(
             _stmt_row(bs, "Long Term Debt"), _stmt_row(bs, "Current Debt")
         )
@@ -439,6 +441,7 @@ def _financial_history(symbol: str) -> dict:
             rv = _year_value(rev, ts)
             ni_v = _year_value(ni, ts)
             eq = _year_value(equity, ts)
+            as_ = _year_value(assets, ts)
             db_ = _year_value(debt, ts)
             oc = _year_value(ocf, ts)
             cp = _year_value(capex, ts)
@@ -456,6 +459,7 @@ def _financial_history(symbol: str) -> dict:
                 "fcf": fcf_v,
                 "total_debt": db_,
                 "equity": eq,
+                "total_assets": as_,
                 "ocf": oc,
                 "roe": (ni_v / eq * 100) if (eq and eq > 0 and ni_v is not None) else None,
                 "roce": (eb / ce * 100) if (ce and ce > 0 and eb is not None) else None,
@@ -505,6 +509,16 @@ def _financial_history(symbol: str) -> dict:
             out["cfo_pat_ratio"] = ocf_latest / ni_latest
         if len(ocf_vals) >= 2 and ocf_vals[-2] and ocf_vals[-2] > 0 and ocf_vals[-1] is not None:
             out["cfo_growth"] = ocf_vals[-1] / ocf_vals[-2] - 1
+        # Accrual ratio (Sloan): (Net Income − CFO) / Total Assets.
+        # High positive accruals = profits not backed by cash — fraud red flag.
+        assets_latest = rows[-1].get("total_assets") if rows else None
+        if (
+            ocf_latest is not None
+            and ni_latest is not None
+            and assets_latest is not None
+            and assets_latest > 0
+        ):
+            out["accrual_ratio"] = (ni_latest - ocf_latest) / assets_latest
         out["_rows"] = rows
         return out
     except Exception as exc:  # pragma: no cover - network

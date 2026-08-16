@@ -100,6 +100,10 @@ def quality_score(f: dict) -> Optional[float]:
     stability = institutional_quality_score(f)
     # Quality of earnings: CFO/PAT ≈ 1 is healthy; profits without cash is a red flag.
     cfo_pat = sigmoid(f.get("cfo_pat_ratio"), 1.0, 0.5)
+    # Accrual ratio (Sloan): (NI − CFO) / Total Assets. High positive accruals
+    # mean earnings quality is low — a proven fraud predictor.
+    acc = f.get("accrual_ratio")
+    accrual = (100 - sigmoid(acc * 100, 6, 4)) if acc is not None else None
     de = f.get("debt_equity")
     if is_financial(f.get("sector")):
         debt = 60.0  # banks/financials carry structurally high leverage
@@ -108,7 +112,7 @@ def quality_score(f: dict) -> Optional[float]:
     else:
         debt = None
     return _weighted(
-        [(roe, 0.28), (roce, 0.28), (fcf, 0.10), (cfo_pat, 0.08), (debt, 0.11), (stability, 0.15)]
+        [(roe, 0.26), (roce, 0.26), (fcf, 0.09), (cfo_pat, 0.08), (accrual, 0.07), (debt, 0.10), (stability, 0.14)]
     )
 
 
@@ -388,6 +392,7 @@ def compute_scores(
         parts["revision_score"] = revision_score(f)
         parts["factor_contributions"] = contrib
         parts["vol"] = row.get("vol")
+        parts["max_dd"] = row.get("max_dd")
         records.append(parts)
     return records
 

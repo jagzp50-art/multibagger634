@@ -1,5 +1,6 @@
 """
-Unit tests for Sovereign Lite v7 (lite/scoring, lite/regime, lite/multibagger).
+Unit tests for Sovereign Lite v8 (lite/scoring, lite/regime, lite/multibagger,
+lite/portfolio, lite/backtest, lite/breadth, lite/db).
 
 Run:  python3 -m pytest tests/test_lite_scoring.py -q
 """
@@ -7,6 +8,7 @@ import math
 import os
 import sys
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -228,10 +230,11 @@ def test_build_allocation_rank_weighted():
     from lite import portfolio
 
     recs = [
-        {"symbol": f"S{i}.NS", "name": f"S{i}", "sector": "IT", "pos_score": 90 - i, "mb_bucket": "STRONG"}
+        {"symbol": f"S{i}.NS", "name": f"S{i}", "sector": f"SECT{i % 3}", "pos_score": 90 - i, "mb_bucket": "STRONG"}
         for i in range(5)
     ]
-    alloc = portfolio.build_allocation(recs, equity_pct=60, top_n=5)
+    # Cap disabled so this test isolates the rank tapering, not sector caps.
+    alloc = portfolio.build_allocation(recs, equity_pct=60, top_n=5, max_sector_weight=100)
     assert len(alloc) == 5
     assert abs(sum(a["weight_pct"] for a in alloc) - 60.0) < 0.01
     assert alloc[0]["weight_pct"] > alloc[-1]["weight_pct"]  # top gets the most
@@ -467,10 +470,11 @@ def test_kelly_lite_prefers_low_vol_quality():
     from lite import portfolio
 
     recs = [
-        {"symbol": "A.NS", "pos_score": 80, "quality": 95, "vol": 0.18, "mb_bucket": "STRONG", "sector": "IT"},
-        {"symbol": "B.NS", "pos_score": 80, "quality": 40, "vol": 0.60, "mb_bucket": "WATCHLIST", "sector": "IT"},
-    ]
-    alloc = portfolio.build_allocation(recs, equity_pct=50, top_n=2, mode="kelly")
+            {"symbol": "A.NS", "pos_score": 80, "quality": 95, "vol": 0.18, "mb_bucket": "STRONG", "sector": "IT"},
+            {"symbol": "B.NS", "pos_score": 80, "quality": 40, "vol": 0.60, "mb_bucket": "WATCHLIST", "sector": "Healthcare"},
+        ]
+    # Cap disabled so this test isolates the Kelly-Lite preference, not sector caps.
+    alloc = portfolio.build_allocation(recs, equity_pct=50, top_n=2, mode="kelly", max_sector_weight=100)
     by = {a["symbol"]: a for a in alloc}
     assert by["A.NS"]["weight_pct"] > by["B.NS"]["weight_pct"] * 2
     assert abs(sum(a["weight_pct"] for a in alloc) - 50.0) < 0.01
@@ -483,13 +487,15 @@ def test_breadth_computes_percentages():
 
     from lite import breadth
 
-    idx = pd.date_range("2024-01-01", periods=250, freq="B")
-    up = pd.Series([100 + i * 0.5 for i in range(250)], index=idx)  # above every SMA
-    flat = pd.Series([200.0] * 250, index=idx)  # exactly at the 200-SMA → not above
+    idx = pd.date_range("2024-01-01", periods=260, freq="B")
+    up = pd.Series([100 + i * 0.5 for i in range(260)], index=idx)  # above every SMA
+    flat = pd.Series([200.0] * 260, index=idx)  # exactly at the 200-SMA → not above
     b = breadth.compute_breadth({"UP.NS": pd.DataFrame({"close": up}), "FLAT.NS": pd.DataFrame({"close": flat})})
     assert b["n"] == 2
     assert b["above_20"] == 50.0 and b["above_50"] == 50.0 and b["above_200"] == 50.0
-    assert b["market_health"] == 50.0
+    assert b["new_highs"] == 100.0  # both names sit at/near their 52-week high
+    # 0.10·50 + 0.25·50 + 0.40·50 + 0.25·66.7 (high/low ratio component)
+    assert b["market_health"] == pytest.approx(54.2, abs=0.5)
 
 
 # ── Watchlist intelligence (Phase 8) ────────────────────────────────────────
@@ -631,3 +637,168 @@ def test_score_history_snapshot_and_previous(tmp_path, monkeypatch):
     assert db_mod.previous_score_snapshot()["A.NS"]["score"] == 70.0
     hist = db_mod.score_history_for("A.NS")
     assert [h["score"] for h in hist] == [70.0, 74.0]
+
+
+# ── v8: Quality of earnings (accrual ratio) ─────────────────────────────────
+
+def test_quality_penalizes_high_accruals():
+    base = {"roe": 20, "roce": 24, "fcf_margin": 10, "debt_equity": 0.3, "sector": "Technology"}
+    clean = {**base, "accrual_ratio": 0.04}    # earnings backed by cash
+    risky = {**base, "accrual_ratio": 0.6}     # Sloan red flag: profits not in CFO
+    assert scoring.quality_score(clean) > scoring.quality_score(risky) + 5
+
+
+# ── v8: Transaction cost model ──────────────────────────────────────────────
+
+def test_cost_breakdown_components_and_floor():
+    from lite import backtest
+
+    low = backtest._cost_breakdown(0.25)
+    assert low["stt_pct"] == 0.10
+    assert low["brokerage_pct"] == 0.03
+    assert low["gst_pct"] == pytest.approx(0.0054, abs=0.001)
+    assert low["sebi_pct"] == pytest.approx(0.0001, abs=0.0001)
+    assert low["total_per_side_pct"] == 0.25  # floored at the configured cost
+
+    high = backtest._cost_breakdown(0.6)
+    assert high["total_per_side_pct"] == 0.6
+    assert high["slippage_pct"] > 0.3  # extra slippage beyond the regulatory stack
+
+
+def test_trade_net_return_includes_costs():
+    from lite import backtest
+
+    pos = {"shares": 10, "entry": 100.0, "peak": 100.0, "entry_date": "2024-01-01"}
+    t = backtest._trade(pos, "A.NS", pd.Timestamp("2024-02-01"), 110.0, "test", cost=0.0025)
+    gross = 110.0 / 100.0 - 1  # +10%
+    expected = ((110.0 * (1 - 0.0025)) / (100.0 * (1 + 0.0025)) - 1) * 100
+    assert t["return_pct"] == pytest.approx(expected, abs=0.01)
+    assert t["return_pct"] < gross * 100 - 0.4  # costs eat ~0.5% round trip
+    assert t["cost_pct"] == 0.25
+
+
+def test_backtest_reports_cost_drag_and_survivorship_guard():
+    from lite import backtest
+
+    idx = pd.date_range("2022-01-01", periods=700, freq="B")
+    n = len(idx)
+    early = pd.Series([100 * (1.0008 ** i) for i in range(n)], index=idx)
+    # Late starter: plenty of bars, but no history before the window begins →
+    # it must be excluded rather than silently backfilled into 2022.
+    late_idx = idx[350:]
+    late = pd.Series([100 * (1.001 ** i) for i in range(len(late_idx))], index=late_idx)
+    res = backtest.run_backtest(
+        {"EARLY.NS": pd.DataFrame({"close": early}), "LATE.NS": pd.DataFrame({"close": late})},
+        {"years": 2, "top_n": 1},
+    )
+    s = res["summary"]
+    assert "cost_drag_pct" in s and s["cost_drag_pct"] > 0
+    assert s.get("cost_model", {}).get("total_per_side_pct") == 0.25
+    assert any("survivorship" in w for w in res["warnings"])
+    # Only the early survivor should trade
+    assert all(t["symbol"] == "EARLY.NS" for t in res["trades"])
+
+
+# ── v8: Drawdown-aware Kelly-Lite + sector caps + factor exposure ───────────
+
+def test_kelly_lite_penalizes_deep_drawdowns():
+    from lite import portfolio
+
+    calm = {"pos_score": 80.0, "quality": 60.0, "vol": 0.25, "max_dd": -0.15}
+    scary = {**calm, "max_dd": -0.55}  # low vol but catastrophic drawdown
+    assert portfolio._kelly_lite(calm) > portfolio._kelly_lite(scary) * 2
+
+
+def test_sector_caps_trim_concentration():
+    from lite import portfolio
+
+    # Infeasible case: 6 Financials + 2 Tech, 60% total, 25% cap each →
+    # Financials 45% is trimmed to 25%, Tech fills to 25%, the un-placeable
+    # 10% (only two sectors can hold 50% max) leaves the book as cash.
+    records = []
+    for i in range(6):
+        records.append({"symbol": f"FIN{i}.NS", "sector": "Financials", "pos_score": 80.0, "name": f"FIN{i}"})
+    for i in range(2):
+        records.append({"symbol": f"TECH{i}.NS", "sector": "Technology", "pos_score": 80.0, "name": f"TECH{i}"})
+    alloc = portfolio.build_allocation(records, equity_pct=60.0, top_n=8, mode="conviction", max_sector_weight=25.0)
+    sw = portfolio.sector_weights(alloc)
+    # Rounding tolerance: per-name 2-decimal weights can overshoot by ~0.02.
+    assert sw["Financials"] <= 25.1
+    assert sw["Technology"] <= 25.1
+    assert abs(sum(sw.values()) - 50.0) < 0.5  # excess 10% → cash, nothing lost
+
+    # Feasible case: 3 sectors, 60% total, 25% cap → no cash loss.
+    records2 = []
+    for i in range(4):
+        records2.append({"symbol": f"FIN{i}.NS", "sector": "Financials", "pos_score": 80.0, "name": f"FIN{i}"})
+    for i in range(2):
+        records2.append({"symbol": f"TECH{i}.NS", "sector": "Technology", "pos_score": 80.0, "name": f"TECH{i}"})
+    for i in range(2):
+        records2.append({"symbol": f"HEALTH{i}.NS", "sector": "Healthcare", "pos_score": 80.0, "name": f"HEALTH{i}"})
+    alloc2 = portfolio.build_allocation(records2, equity_pct=60.0, top_n=8, mode="conviction", max_sector_weight=25.0)
+    sw2 = portfolio.sector_weights(alloc2)
+    assert sw2["Financials"] <= 25.01
+    assert abs(sum(sw2.values()) - 60.0) < 0.5  # fully redistributed, total intact
+
+
+def test_factor_exposure_reports_crowding():
+    from lite import portfolio
+
+    alloc = [
+        {"symbol": "A.NS", "sector": "Financials", "weight_pct": 20.0},
+        {"symbol": "B.NS", "sector": "Technology", "weight_pct": 10.0},
+    ]
+    recs = {
+        "A.NS": {"quality": 90, "growth": 40, "momentum": 30, "valuation": 20, "risk": 10, "mb_score": 70, "rs_rank": 60},
+        "B.NS": {"quality": 30, "growth": 30, "momentum": 90, "valuation": 20, "risk": 10, "mb_score": 70, "rs_rank": 90},
+    }
+    exp = portfolio.factor_exposure(alloc, recs)
+    assert exp["quality"] == pytest.approx(70.0, abs=0.1)  # (90*20 + 30*10)/30
+    assert exp["momentum"] == pytest.approx(50.0, abs=0.1)
+    assert exp["top_factor"] == "quality"
+
+
+# ── v8: Market breadth with new highs / new lows ────────────────────────────
+
+def test_breadth_new_highs_lows_and_health():
+    from lite import breadth
+
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    rising = pd.DataFrame({"close": [100 * (1.001 ** i) for i in range(300)]}, index=idx)
+    falling = pd.DataFrame({"close": [100 * (0.999 ** i) for i in range(300)]}, index=idx)
+
+    only_up = breadth.compute_breadth({"A.NS": rising})
+    assert only_up["above_200"] == 100.0
+    assert only_up["new_highs"] == 100.0
+    assert only_up["new_lows"] == 0.0
+    assert only_up["market_health"] == pytest.approx(100.0, abs=0.1)
+
+    mixed = breadth.compute_breadth({"A.NS": rising, "B.NS": falling})
+    assert mixed["above_200"] == 50.0
+    assert mixed["new_lows"] == 50.0
+    assert mixed["market_health"] == pytest.approx(50.0, abs=0.1)
+
+
+# ── v8: Point-in-time snapshots (survivorship + PIT fundamentals) ───────────
+
+def test_pit_universe_and_fundamentals_snapshots(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "pit.db"))
+    db_mod.init_db()
+    db_mod.seed_universe([{"symbol": "A.NS", "name": "A", "sector": "Tech"}])
+    db_mod.upsert_fundamentals(
+        {"symbol": "A.NS", "roe": 25.0, "roce": 30.0, "debt_equity": 0.2,
+         "sales_growth": 18.0, "profit_growth": 22.0, "pe": 28.0, "pb": 5.0,
+         "fcf_margin": 10.0, "accrual_ratio": 0.05, "data_confidence": 92.0}
+    )
+
+    assert db_mod.snapshot_universe("2026-08-15") == 1
+    assert db_mod.universe_history_snapshots()[0]["members"] == 1
+
+    assert db_mod.snapshot_fundamentals_history("2026-08-15") == 1
+    hist = db_mod.fundamentals_history_for("A.NS")
+    assert len(hist) == 1
+    assert hist[0]["roe"] == 25.0
+    assert hist[0]["accrual_ratio"] == pytest.approx(0.05, abs=1e-9)
+    assert hist[0]["data_confidence"] == 92.0
