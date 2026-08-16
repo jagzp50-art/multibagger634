@@ -161,7 +161,8 @@ async def update_prices_background():
 
         await asyncio.sleep(300)
 
-app.mount("/static", StaticFiles(directory="web-ui"), name="static")
+_WEB_UI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web-ui")
+app.mount("/static", StaticFiles(directory=_WEB_UI), name="static")
 
 def health_ping_loop():
     """Lightweight background loop to keep connections alive."""

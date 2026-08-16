@@ -145,18 +145,34 @@ def risk_score(f: dict, px: dict) -> Optional[float]:
 def accumulation_score(f: dict, px: dict) -> Optional[float]:
     """Institutional-accumulation proxy from data yFinance actually provides.
 
-    Volume expansion (35%) · market-cap growth via 12M return (35%) ·
-    earnings acceleration (30%). Delivery % isn't in the Yahoo feed for NSE
-    names, so heavy volume + price growth + accelerating earnings stand in
-    for it.
+    Volume expansion (35%) · price strength via 12M return (35%) · proximity
+    to the 52-week high (30%). Delivery % isn't in the Yahoo feed for NSE
+    names, so heavy volume + price strength + making new highs stand in for
+    institutional buying.
     """
     vr = px.get("volume_ratio")
     vol = sigmoid((vr - 1) * 100, 30, 50) if vr is not None else None
     ret12 = px.get("ret_12m")
-    mcap_growth = sigmoid(ret12 * 100, 15, 25) if ret12 is not None else None
-    accel = f.get("eps_accel")
+    price_strength = sigmoid(ret12 * 100, 15, 25) if ret12 is not None else None
+    dist = px.get("dist_52w_high")
+    proximity = None
+    if dist is not None:
+        proximity = 100 - sigmoid(dist * 100, 10, 8)
+    return _weighted([(vol, 0.35), (price_strength, 0.35), (proximity, 0.30)])
+
+
+def opportunity_score(row: dict) -> Optional[float]:
+    """Screener's primary ranking: hunt for mispriced multibaggers in motion.
+
+    40% MB score · 30% RS rank · 20% earnings acceleration · 10% trend
+    template (100 pass / 25 above 200-DMA only / 0 failed).
+    """
+    mb = row.get("mb_score")
+    rs = row.get("rs_rank")
+    accel = row.get("eps_accel")
     accel = _clamp(accel, 0, 100) if accel is not None else None
-    return _weighted([(vol, 0.35), (mcap_growth, 0.35), (accel, 0.30)])
+    trend = 100.0 if row.get("trend_ok") else (25.0 if row.get("above_200") else 0.0)
+    return _weighted([(mb, 0.40), (rs, 0.30), (accel, 0.20), (trend, 0.10)])
 
 
 def rs_boost_for(rs: Optional[float]) -> float:

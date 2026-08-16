@@ -14,11 +14,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from . import backtest as bt
-from . import data, db, indicators, regime as regime_mod, scoring
+from . import data, db, indicators, portfolio, regime as regime_mod, rotation, scoring
 from .pipeline import run_scan
 from .universe import default_universe
 
@@ -132,7 +134,7 @@ def create_app() -> FastAPI:
         min_growth: float = 0,
         max_pe: Optional[float] = None,
         bucket: Optional[str] = None,
-        sort: str = "score",
+        sort: str = "opp",
         limit: int = 500,
     ):
         scores = db.load_scores()
@@ -153,7 +155,7 @@ def create_app() -> FastAPI:
             if bucket and (r.get("mb_bucket") or "") != bucket.upper():
                 continue
             out.append(r)
-        key = {"score": "score", "roe": "roe", "growth": "sales_growth", "pe": "pe"}.get(sort, "score")
+        key = {"opp": "opp_score", "score": "score", "roe": "roe", "growth": "sales_growth", "pe": "pe"}.get(sort, "opp_score")
         out.sort(key=lambda r: (r.get(key) if isinstance(r.get(key), (int, float)) else -1), reverse=True)
         return _json_safe(_with_prev(out)[: max(1, min(limit, 1000))])
 
@@ -189,6 +191,32 @@ def create_app() -> FastAPI:
     def mb_candidate_history(symbol: str, limit: int = 40):
         return _json_safe(db.mb_candidates_history(symbol, limit=max(1, min(limit, 200))))
 
+    # ── Sector rotation + portfolio construction ─────────────────────────────
+
+    @app.get("/api/sectors")
+    def sectors():
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        ranked = rotation.rank_sectors(scores, fundas)
+        out = sorted(ranked.values(), key=lambda s: s["strength"], reverse=True)
+        return _json_safe(out)
+
+    @app.get("/api/portfolio")
+    def portfolio_endpoint(top_n: int = 8):
+        regime = _fresh_regime()
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        rows = _merge(scores, fundas)
+        equity_pct = float(regime.get("allocation", {}).get("equity", 60))
+        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n)
+        return _json_safe(
+            {
+                "regime": regime.get("regime"),
+                "equity_pct": equity_pct,
+                "allocation": alloc,
+            }
+        )
+
     # ── Score history + quarterly detail ─────────────────────────────────────
 
     @app.get("/api/score-history/{symbol}")
@@ -222,6 +250,11 @@ def create_app() -> FastAPI:
         result = bt.run_backtest(frames, params or {})
         if not result.get("trades") and not result.get("equity_curve"):
             raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
+        # Benchmark comparison: same window, buy-and-hold NIFTY 50.
+        bench = _benchmark_stats(result.get("equity_curve") or [], result["summary"].get("initial_capital"))
+        if bench:
+            result["summary"].update(bench["summary"])
+            result["benchmark_curve"] = bench["curve"]
         saved_id = db.save_backtest(result["params"], result["equity_curve"], result["trades"], result["summary"])
         return _json_safe({**result, "id": saved_id})
 
@@ -323,6 +356,56 @@ def _with_prev(rows: list[dict]) -> list[dict]:
             prev_rank - cur_rank if cur_rank is not None and prev_rank is not None else None
         )
     return rows
+
+
+def _benchmark_stats(curve: list, initial: float) -> Optional[dict]:
+    """Buy-and-hold NIFTY 50 stats over the same window as a backtest curve.
+
+    Returns summary fields (benchmark return/CAGR/max DD + alpha vs the
+    strategy) and an aligned benchmark curve for charting.
+    """
+    if not curve or not initial:
+        return None
+    nifty = data.fetch_benchmark("^NSEI", period="5y")
+    if nifty is None or nifty.empty:
+        return None
+    closes = nifty["Close"].dropna()
+    if len(closes) < 60:
+        return None
+    start, end = curve[0]["date"], curve[-1]["date"]
+    idx = pd.DatetimeIndex(pd.to_datetime(closes.index.date))
+    mask = (idx >= pd.Timestamp(start)) & (idx <= pd.Timestamp(end))
+    window = closes[mask]
+    if len(window) < 20:
+        return None
+    first = float(window.iloc[0])
+    last = float(window.iloc[-1])
+    if first <= 0:
+        return None
+    total_ret = last / first - 1
+    years = max(len(window) / 252, 1 / 252)
+    cagr = ((last / first) ** (1 / years) - 1) * 100
+    norm = window / first * initial
+    mdd = float(((norm - norm.cummax()) / norm.cummax()).min() * 100)
+
+    by_date = {d.date().isoformat(): round(v, 2) for d, v in zip(idx[mask], norm)}
+    aligned, last_v = [], None
+    for pt in curve:
+        if pt["date"] in by_date:
+            last_v = by_date[pt["date"]]
+        if last_v is not None:
+            aligned.append({"date": pt["date"], "value": last_v})
+    strat_ret = curve[-1]["equity"] / initial - 1
+    return {
+        "summary": {
+            "benchmark": "NIFTY 50",
+            "benchmark_return_pct": round(total_ret * 100, 2),
+            "benchmark_cagr_pct": round(cagr, 2),
+            "benchmark_max_dd_pct": round(mdd, 2),
+            "alpha_pct": round((strat_ret - total_ret) * 100, 2),
+        },
+        "curve": aligned,
+    }
 
 
 def _json_safe(obj):

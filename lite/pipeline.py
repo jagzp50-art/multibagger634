@@ -11,7 +11,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from . import data, db, indicators, multibagger, regime as regime_mod, scoring
+from . import data, db, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring
 from .universe import default_universe
 
 
@@ -56,13 +56,24 @@ def run_scan(force_fundamentals: bool = False) -> dict:
     print(f"[lite] regime: {regime['regime']} (vix={regime['vix']}, adx={regime['adx']})")
 
     records = scoring.compute_scores(regime, fundas_list, px_frames)
+    fundas_map = {f["symbol"]: f for f in fundas_list}
+
+    # Sector rotation: tilt scores toward stocks inside strong sectors.
+    records = rotation.apply_sector_rotation(records, fundas_map)
+
     records.sort(key=lambda r: r.get("score") or 0, reverse=True)
     for i, r in enumerate(records, start=1):
         r["rank"] = i
     print(f"[lite] scored: {len(records)} symbols")
 
-    fundas_map = {f["symbol"]: f for f in fundas_list}
     mb_records = multibagger.detect(records, fundas_map, px_frames)
+
+    # Opportunity score (screener's main ranking) + portfolio position score.
+    for r in mb_records:
+        r["eps_accel"] = (fundas_map.get(r["symbol"], {}) or {}).get("eps_accel")
+        opp = scoring.opportunity_score(r)
+        r["opp_score"] = round(opp, 1) if opp is not None else None
+    mb_records = portfolio.attach_position_scores(mb_records)
 
     # MB rank (by MB score) so the candidates table tracks movement over time.
     mb_records.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)

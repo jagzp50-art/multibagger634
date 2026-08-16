@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS scores (
     rs_12m   INTEGER,
     rs_boost REAL,
     accumulation REAL,
+    pos_score REAL,
+    opp_score REAL,
+    sector_boost REAL,
     trend_ok INTEGER,
     updated_at TEXT
 );
@@ -144,7 +147,7 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN rev_accel REAL")
         if "pat_accel" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN pat_accel REAL")
-        for col in ("rs_6m", "rs_12m", "rs_boost", "accumulation"):
+        for col in ("rs_6m", "rs_12m", "rs_boost", "accumulation", "pos_score", "opp_score", "sector_boost"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE scores ADD COLUMN {col} REAL")
         conn.commit()
@@ -338,8 +341,8 @@ def upsert_scores(records: Iterable[dict]) -> None:
             INSERT OR REPLACE INTO scores
             (symbol, score, quality, growth, momentum, valuation, risk,
              mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_6m, rs_12m,
-             rs_boost, accumulation, trend_ok, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rs_boost, accumulation, pos_score, opp_score, sector_boost, trend_ok, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -360,6 +363,9 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     r.get("rs_12m"),
                     _num(r.get("rs_boost")),
                     _num(r.get("accumulation")),
+                    _num(r.get("pos_score")),
+                    _num(r.get("opp_score")),
+                    _num(r.get("sector_boost")),
                     int(bool(r.get("trend_ok"))),
                     datetime.now().isoformat(timespec="seconds"),
                 )

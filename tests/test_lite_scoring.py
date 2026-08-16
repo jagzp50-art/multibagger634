@@ -206,9 +206,66 @@ def test_rs_boost_tiers():
 
 
 def test_accumulation_score_ranks_accumulating_stocks_higher():
-    accumulating = {"volume_ratio": 2.5, "ret_12m": 0.5, "eps_accel": 90.0}
-    fading = {"volume_ratio": 0.5, "ret_12m": -0.3, "eps_accel": 10.0}
+    accumulating = {"volume_ratio": 2.5, "ret_12m": 0.5, "dist_52w_high": 0.03, "eps_accel": 90.0}
+    fading = {"volume_ratio": 0.5, "ret_12m": -0.3, "dist_52w_high": 0.45, "eps_accel": 10.0}
     assert scoring.accumulation_score(accumulating, accumulating) > scoring.accumulation_score(fading, fading) + 30
+
+
+# ── Portfolio construction + opportunity score ──────────────────────────────
+
+def test_position_score_weights():
+    from lite import portfolio
+
+    # 0.4*90 + 0.3*85 + 0.2*95 + 0.1*80 = 88.5
+    assert portfolio.position_score(90, 85, 95, 80) == pytest.approx(88.5, abs=0.01)
+    weak = portfolio.position_score(30, 20, 10, 30)
+    assert portfolio.position_score(90, 85, 95, 80) > weak + 30
+    assert portfolio.position_score(None, 85, 95, 80) is not None  # None-safe
+    assert portfolio.position_score(None, None, None, None) is None
+
+
+def test_build_allocation_rank_weighted():
+    from lite import portfolio
+
+    recs = [
+        {"symbol": f"S{i}.NS", "name": f"S{i}", "sector": "IT", "pos_score": 90 - i, "mb_bucket": "STRONG"}
+        for i in range(5)
+    ]
+    alloc = portfolio.build_allocation(recs, equity_pct=60, top_n=5)
+    assert len(alloc) == 5
+    assert abs(sum(a["weight_pct"] for a in alloc) - 60.0) < 0.01
+    assert alloc[0]["weight_pct"] > alloc[-1]["weight_pct"]  # top gets the most
+    assert alloc[0]["symbol"] == "S0.NS"
+
+
+def test_opportunity_score_formula():
+    row = {"mb_score": 90, "rs_rank": 95, "eps_accel": 80, "trend_ok": True}
+    assert scoring.opportunity_score(row) == pytest.approx(0.4 * 90 + 0.3 * 95 + 0.2 * 80 + 0.1 * 100, abs=0.01)
+    weak = {"mb_score": 30, "rs_rank": 20, "eps_accel": 10, "trend_ok": False, "above_200": False}
+    assert scoring.opportunity_score(weak) < 30
+
+
+# ── Sector rotation ─────────────────────────────────────────────────────────
+
+def test_sector_rotation_boosts_strong_sectors():
+    from lite import rotation
+
+    fundas = {"A.NS": {"sector": "IT"}, "B.NS": {"sector": "IT"}, "C.NS": {"sector": "CEMENT"}, "D.NS": {"sector": "FMCG"}}
+    records = [
+        {"symbol": "A.NS", "rs_rank": 95.0, "growth": 90.0, "score": 60.0},
+        {"symbol": "B.NS", "rs_rank": 90.0, "growth": 85.0, "score": 55.0},
+        {"symbol": "C.NS", "rs_rank": 10.0, "growth": 20.0, "score": 50.0},
+        {"symbol": "D.NS", "rs_rank": 50.0, "growth": 55.0, "score": 52.0},
+    ]
+    out = rotation.apply_sector_rotation(records, fundas)
+    by = {r["symbol"]: r for r in out}
+    assert by["A.NS"]["sector_boost"] > 0
+    assert by["C.NS"]["sector_boost"] < 0
+    assert by["A.NS"]["score"] > 60.0  # boosted
+    assert by["C.NS"]["score"] < 50.0  # penalized
+    secs = rotation.rank_sectors(records, fundas)
+    assert secs["IT"]["rank"] == 1
+    assert secs["CEMENT"]["rank"] == 3
 
 
 def test_compute_scores_sets_rs_blend_boost_and_ranking():

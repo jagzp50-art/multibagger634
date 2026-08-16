@@ -33,10 +33,10 @@ ENV/
 secrets/
 
 # ── Node / web-ui ─────────────────────────────────────────────────────────────
-web-ui/node_modules/
-web-ui/.next/
-web-ui/dist/
-web-ui/.cache/
+pro/web-ui/node_modules/
+pro/web-ui/.next/
+pro/web-ui/dist/
+pro/web-ui/.cache/
 node_modules/
 
 # ── Runtime databases & model artifacts ───────────────────────────────────────
@@ -78,15 +78,16 @@ liquidity_report.md
 liquidity.json
 thesis_break.json
 test_output*.txt
-ops/daily_reports/
-ops/institutional_daily_scorecard.json
+pro/ops/daily_reports/
+pro/ops/institutional_daily_scorecard.json
+pro/ops/audit_result.txt
 
 # ── Debug / scratch outputs (never commit these) ─────────────────────────────
 check_fail*.txt
 disq_fail*.txt
 final_fail*.txt
-ops/ticker_list_*.txt
-ops/audit_result.txt
+pro/ops/ticker_list_*.txt
+pro/ops/audit_result.txt
 
 # ── Data directory (populated at runtime) ────────────────────────────────────
 data/
