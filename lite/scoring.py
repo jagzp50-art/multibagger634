@@ -56,6 +56,21 @@ def _weighted(parts: list[tuple[Optional[float], float]]) -> Optional[float]:
     return _clamp(num / den)
 
 
+def confidence_factor(confidence: Optional[float]) -> float:
+    """Multiplier that punishes incomplete data: 100% coverage → 1.0,
+    50% coverage → 0.75. Garbage data can no longer rank as highly."""
+    if confidence is None:
+        return 1.0
+    c = max(0.0, min(100.0, float(confidence)))
+    return 0.5 + 0.5 * c / 100.0
+
+
+def apply_confidence(score: Optional[float], confidence: Optional[float]) -> Optional[float]:
+    if score is None:
+        return None
+    return _clamp(score * confidence_factor(confidence))
+
+
 def is_financial(sector: Optional[str]) -> bool:
     if not sector:
         return False
@@ -65,10 +80,24 @@ def is_financial(sector: Optional[str]) -> bool:
 
 # ── Component scores ────────────────────────────────────────────────────────
 
+def institutional_quality_score(f: dict) -> Optional[float]:
+    """Consistency across the last ~5 fiscal years — what institutions actually
+    pay for. ROE 22/23/21/24/22 beats ROE 8/35/12/40/10 even at the same mean."""
+    parts = [
+        (f.get("roe_stability"), 0.30),
+        (f.get("profit_stability"), 0.25),
+        (f.get("sales_stability"), 0.15),
+        (f.get("margin_stability"), 0.15),
+        (f.get("fcf_stability"), 0.15),
+    ]
+    return _weighted(parts)
+
+
 def quality_score(f: dict) -> Optional[float]:
     roe = sigmoid(f.get("roe"), 15, 8)
     roce = sigmoid(f.get("roce"), 18, 10)
     fcf = sigmoid(f.get("fcf_margin"), 5, 8)
+    stability = institutional_quality_score(f)
     de = f.get("debt_equity")
     if is_financial(f.get("sector")):
         debt = 60.0  # banks/financials carry structurally high leverage
@@ -76,7 +105,7 @@ def quality_score(f: dict) -> Optional[float]:
         debt = 100 - sigmoid(de, 0.6, 0.5)
     else:
         debt = None
-    return _weighted([(roe, 0.35), (roce, 0.35), (fcf, 0.15), (debt, 0.15)])
+    return _weighted([(roe, 0.30), (roce, 0.30), (fcf, 0.12), (debt, 0.13), (stability, 0.15)])
 
 
 def margin_expansion_score(f: dict) -> Optional[float]:
@@ -139,7 +168,21 @@ def risk_score(f: dict, px: dict) -> Optional[float]:
     else:
         debt_safety = None
     beta_safety = None if beta is None else 100 - sigmoid(beta, 1.2, 0.5)
-    return _weighted([(vol_safety, 0.30), (dd_safety, 0.25), (debt_safety, 0.30), (beta_safety, 0.15)])
+    # Earnings / sales volatility (std of YoY growth, 5y) → stability of the franchise
+    ev = f.get("earnings_vol")
+    sv = f.get("sales_vol")
+    earnings_safety = None if ev is None else 100 - sigmoid(ev * 100, 40, 20)
+    sales_safety = None if sv is None else 100 - sigmoid(sv * 100, 40, 20)
+    return _weighted(
+        [
+            (vol_safety, 0.25),
+            (dd_safety, 0.20),
+            (debt_safety, 0.25),
+            (beta_safety, 0.10),
+            (earnings_safety, 0.10),
+            (sales_safety, 0.10),
+        ]
+    )
 
 
 def accumulation_score(f: dict, px: dict) -> Optional[float]:
@@ -161,18 +204,38 @@ def accumulation_score(f: dict, px: dict) -> Optional[float]:
     return _weighted([(vol, 0.35), (price_strength, 0.35), (proximity, 0.30)])
 
 
-def opportunity_score(row: dict) -> Optional[float]:
-    """Screener's primary ranking: hunt for mispriced multibaggers in motion.
+def revision_score(f: dict) -> Optional[float]:
+    """Earnings-revision proxy built from free data — institutions buy future
+    earnings, so acceleration signals carry alpha:
 
-    40% MB score · 30% RS rank · 20% earnings acceleration · 10% trend
-    template (100 pass / 25 above 200-DMA only / 0 failed).
+    35% EPS acceleration · 30% revenue acceleration · 20% margin expansion ·
+    15% annual revenue acceleration (5y trend).
+    """
+    accel = f.get("eps_accel")
+    accel = _clamp(accel, 0, 100) if accel is not None else None
+    rev = f.get("rev_accel")
+    rev = _clamp(rev, 0, 100) if rev is not None else None
+    margin = margin_expansion_score(f)
+    rev_annual = f.get("revenue_accel_annual")
+    rev_annual = _clamp(rev_annual, 0, 100) if rev_annual is not None else None
+    return _weighted([(accel, 0.35), (rev, 0.30), (margin, 0.20), (rev_annual, 0.15)])
+
+
+def opportunity_score(row: dict) -> Optional[float]:
+    """Screener's primary ranking (Opportunity 2.0): a strong idea that is also
+    cheap-ish, consistent, and inside a strong sector:
+
+    30% MB score · 25% RS rank · 20% earnings acceleration · 15% Quality ·
+    10% sector strength.
     """
     mb = row.get("mb_score")
     rs = row.get("rs_rank")
     accel = row.get("eps_accel")
     accel = _clamp(accel, 0, 100) if accel is not None else None
-    trend = 100.0 if row.get("trend_ok") else (25.0 if row.get("above_200") else 0.0)
-    return _weighted([(mb, 0.40), (rs, 0.30), (accel, 0.20), (trend, 0.10)])
+    quality = row.get("quality")
+    sector = row.get("sector_strength")
+    sector = _clamp(sector, 0, 100) if sector is not None else None
+    return _weighted([(mb, 0.30), (rs, 0.25), (accel, 0.20), (quality, 0.15), (sector, 0.10)])
 
 
 def rs_boost_for(rs: Optional[float]) -> float:
@@ -197,6 +260,7 @@ def compute_price_metrics(close: pd.Series, high: pd.Series, low: pd.Series, vol
         "ret_6m": indicators.returns_over(close, 126),
         "ret_12m": indicators.returns_over(close, 252),
         "ret_1m": indicators.returns_over(close, 21),
+        "ret_3m": indicators.returns_over(close, 63),
         "volume_ratio": indicators.volume_ratio(volume),
         "vol": indicators.annualized_vol(close),
         "max_dd": indicators.max_drawdown(close),
@@ -243,21 +307,27 @@ def compute_scores(
         regime.get("_nifty_close", pd.Series(dtype=float)), 126
     )
 
-    # RS rank: percentiles of 6M and 12M returns within this universe,
-    # blended 50/50 (a stock strong in both is a true relative leader).
-    ret6_by_symbol: dict[str, Optional[float]] = {}
-    ret12_by_symbol: dict[str, Optional[float]] = {}
+    # Multi-factor relative strength: percentile rank the universe on 1M, 3M,
+    # 6M and 12M returns, blended 20/20/30/30 — recent acceleration and
+    # longer leadership both count (Minervini / O'Neil style).
+    HORIZONS = [
+        ("ret_1m", 0.20),
+        ("ret_3m", 0.20),
+        ("ret_6m", 0.30),
+        ("ret_12m", 0.30),
+    ]
+    ret_by_symbol: dict[str, dict[str, Optional[float]]] = {}
     for symbol, df in prices.items():
         row = df.iloc[-1] if len(df) else None
-        ret6_by_symbol[symbol] = row.get("ret_6m") if row is not None else None
-        ret12_by_symbol[symbol] = row.get("ret_12m") if row is not None else None
-    valid_ret6 = sorted(
-        (r for r in ret6_by_symbol.values() if r is not None), reverse=True
-    )
-    valid_ret12 = sorted(
-        (r for r in ret12_by_symbol.values() if r is not None), reverse=True
-    )
-    n6, n12 = len(valid_ret6), len(valid_ret12)
+        ret_by_symbol[symbol] = {
+            key: (row.get(key) if row is not None else None) for key, _ in HORIZONS
+        }
+    valid = {
+        key: sorted(
+            (r[key] for r in ret_by_symbol.values() if r[key] is not None), reverse=True
+        )
+        for key, _ in HORIZONS
+    }
 
     records = []
     for f in fundamentals:
@@ -266,16 +336,14 @@ def compute_scores(
         if df is None or df.empty:
             continue
         row = df.iloc[-1].to_dict()
-        rs_6m = _rs_rank(ret6_by_symbol.get(symbol), valid_ret6, n6)
-        rs_12m = _rs_rank(ret12_by_symbol.get(symbol), valid_ret12, n12)
-        if rs_6m is None and rs_12m is None:
-            rs_rank = None
-        elif rs_6m is None:
-            rs_rank = rs_12m
-        elif rs_12m is None:
-            rs_rank = rs_6m
-        else:
-            rs_rank = 0.5 * rs_6m + 0.5 * rs_12m
+        rs_parts: list[tuple[Optional[float], float]] = []
+        for key, w in HORIZONS:
+            val = ret_by_symbol.get(symbol, {}).get(key)
+            rs_h = _rs_rank(val, valid[key], len(valid[key]))
+            row[f"rs_{key}".replace("ret_", "")] = rs_h  # rs_1m / rs_3m / rs_6m / rs_12m
+            if rs_h is not None:
+                rs_parts.append((rs_h, w))
+        rs_rank = _weighted(rs_parts)
         row["rs_rank_score"] = rs_rank
         parts = score_symbol(symbol, f, row, benchmark_ret6)
 
@@ -285,14 +353,22 @@ def compute_scores(
             if v is not None:
                 total += v * weights[key]
         total = _clamp(total + rs_boost_for(rs_rank))
+        # Data-confidence dampener: partial fundamentals can't rank as highly.
+        confidence = f.get("data_confidence")
+        total = apply_confidence(total, confidence)
         parts["score"] = round(total, 1)
         parts["regime"] = regime["regime"]
         parts["trend_ok"] = bool(row.get("trend_ok"))
         parts["above_200"] = bool(row.get("above_200"))
         parts["rs_rank"] = rs_rank
-        parts["rs_6m"] = rs_6m
-        parts["rs_12m"] = rs_12m
+        parts["rs_1m"] = row.get("rs_1m")
+        parts["rs_3m"] = row.get("rs_3m")
+        parts["rs_6m"] = row.get("rs_6m")
+        parts["rs_12m"] = row.get("rs_12m")
         parts["rs_boost"] = rs_boost_for(rs_rank)
+        parts["data_confidence"] = confidence
+        parts["institutional_quality"] = institutional_quality_score(f)
+        parts["revision_score"] = revision_score(f)
         records.append(parts)
     return records
 

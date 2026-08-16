@@ -35,18 +35,40 @@ def _mc_ok(mc: Optional[float]) -> bool:
     return mc is not None and 500 <= mc <= 25_000
 
 
-# Multibagger Score v2 — dedicated formula (weights sum to 1.0):
-#   25% earnings acceleration · 20% sales growth · 15% ROCE · 15% relative
-#   strength · 10% margin expansion · 10% debt reduction · 5% valuation
+# Multibagger Score v3 — dedicated formula (weights sum to 1.0):
+#   25% Compounder (5y consistency) · 18% earnings acceleration ·
+#   14% sales growth · 12% ROCE · 12% relative strength · 8% margin expansion
+#   · 8% debt reduction · 3% valuation
 MB_WEIGHTS = {
-    "accel": 0.25,
-    "sales": 0.20,
-    "roce": 0.15,
-    "rs": 0.15,
-    "margin": 0.10,
-    "debt": 0.10,
-    "valuation": 0.05,
+    "compounder": 0.25,
+    "accel": 0.18,
+    "sales": 0.14,
+    "roce": 0.12,
+    "rs": 0.12,
+    "margin": 0.08,
+    "debt": 0.08,
+    "valuation": 0.03,
 }
+
+
+def compounder_score(f: dict) -> Optional[float]:
+    """5-year compounding quality — the longevity a true multibagger needs:
+
+    25% ROCE consistency · 20% sales CAGR · 20% profit CAGR · 20% FCF CAGR ·
+    15% debt reduction trend.
+    """
+    roce_stab = f.get("roce_stability")
+    sales_cagr = scoring.sigmoid(f.get("sales_cagr_5y") * 100, 15, 10) if f.get("sales_cagr_5y") is not None else None
+    profit_cagr = scoring.sigmoid(f.get("profit_cagr_5y") * 100, 15, 12) if f.get("profit_cagr_5y") is not None else None
+    fcf_cagr = scoring.sigmoid(f.get("fcf_cagr_5y") * 100, 15, 15) if f.get("fcf_cagr_5y") is not None else None
+    parts = [
+        (roce_stab, 0.25),
+        (sales_cagr, 0.20),
+        (profit_cagr, 0.20),
+        (fcf_cagr, 0.20),
+        (f.get("debt_trend"), 0.15),
+    ]
+    return scoring._weighted(parts)
 
 MB_BUCKETS = [
     (90.0, "MULTIBAGGER"),
@@ -86,7 +108,7 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
                 passed += 1
             checklist.append({"code": code, "label": label, "pass": ok})
 
-        # MB v2 — dedicated multibagger formula (see MB_WEIGHTS).
+        # MB v3 — dedicated multibagger formula (see MB_WEIGHTS).
         accel = f.get("eps_accel")
         if accel is None:
             accel = scoring.sigmoid(f.get("eps_growth"), 20, 15)
@@ -106,7 +128,9 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
         else:
             debt = None
         valuation = scoring.valuation_score(f)
+        compounder = compounder_score(f)
         parts = [
+            (compounder, MB_WEIGHTS["compounder"]),
             (accel, MB_WEIGHTS["accel"]),
             (sales, MB_WEIGHTS["sales"]),
             (roce, MB_WEIGHTS["roce"]),
@@ -120,6 +144,7 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
 
         row = dict(r)
         row["mb_score"] = mb
+        row["compounder_score"] = round(compounder, 1) if compounder is not None else None
         row["mb_bucket"] = bucket_for(mb)
         row["mb_rules_passed"] = passed
         row["mb_rules_total"] = len(RULES)

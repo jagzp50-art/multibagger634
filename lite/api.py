@@ -133,6 +133,7 @@ def create_app() -> FastAPI:
         min_roce: float = 0,
         min_growth: float = 0,
         max_pe: Optional[float] = None,
+        min_conf: float = 0,
         bucket: Optional[str] = None,
         sort: str = "opp",
         limit: int = 500,
@@ -151,6 +152,8 @@ def create_app() -> FastAPI:
             if (r.get("growth_metric") or r.get("sales_growth") or 0) < min_growth:
                 continue
             if max_pe is not None and (r.get("pe") or 0) > max_pe:
+                continue
+            if (r.get("data_confidence") or 0) < min_conf:
                 continue
             if bucket and (r.get("mb_bucket") or "") != bucket.upper():
                 continue
@@ -257,6 +260,20 @@ def create_app() -> FastAPI:
             result["benchmark_curve"] = bench["curve"]
         saved_id = db.save_backtest(result["params"], result["equity_curve"], result["trades"], result["summary"])
         return _json_safe({**result, "id": saved_id})
+
+    @app.post("/api/backtest/walk-forward")
+    def walk_forward_endpoint(params: Optional[dict] = None):
+        """Same strategy, N consecutive 12-month folds — hit rate / avg return
+        / worst drawdown across folds instead of one cherry-picked window."""
+        frames = {}
+        for sym in db.universe_symbols():
+            rows = db.load_prices(sym)
+            if rows:
+                frames[sym] = indicators.to_dataframe(rows)
+        result = bt.walk_forward(frames, params or {})
+        if not result.get("folds"):
+            raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
+        return _json_safe(result)
 
     @app.get("/api/backtests")
     def backtests(limit: int = 10):

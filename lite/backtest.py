@@ -166,6 +166,101 @@ def run_backtest(
     }
 
 
+def walk_forward(
+    prices_by_symbol: dict[str, pd.DataFrame],
+    params: dict | None = None,
+) -> dict:
+    """Walk-forward validation: run the exact same rule-based strategy on N
+    consecutive 12-month test windows (each with a 12-month warmup before it).
+
+    The strategy is parameter-free, so this measures how it performed across
+    different regimes instead of one cherry-picked window — hit rate, average
+    return and worst drawdown across folds flag overfit/regime dependence.
+    """
+    p = {**DEFAULT_PARAMS, **(params or {})}
+    fold_months = max(6, min(int(p.get("fold_months", 12)), 24))
+    folds = max(2, min(int(p.get("folds", 3)), 6))
+    top_n = max(1, int(p.get("top_n", 10)))
+    initial = float(p.get("initial_capital", 1_000_000))
+    stop = float(p.get("trailing_stop_pct", 0.20))
+
+    frames = {}
+    for sym, df in prices_by_symbol.items():
+        if df is None or df.empty or "close" not in df.columns:
+            continue
+        s = df["close"].dropna()
+        if len(s) > 260:
+            frames[sym] = s
+    if not frames:
+        return _empty_result(p, "Not enough price history stored. Run a scan first.")
+
+    aligned = pd.concat(frames, axis=1).sort_index().ffill()
+    n_bars = len(aligned)
+    fold_days = fold_months * 21
+    warmup = 260
+    need = warmup + folds * fold_days
+    if n_bars < need:
+        return _empty_result(
+            p,
+            f"Walk-forward needs {need} bars ({folds} × {fold_months}m folds + warmup) but only {n_bars} are stored. "
+            "Run a scan after 5y of prices are fetched.",
+        )
+
+    fold_results = []
+    for i in range(folds):
+        test_end = n_bars - i * fold_days
+        test_start = test_end - fold_days
+        slice_start = test_start - warmup
+        sub = {
+            sym: pd.DataFrame({"close": aligned[sym].iloc[slice_start:test_end]})
+            for sym in aligned.columns
+        }
+        res = run_backtest(
+            sub,
+            {"years": 1, "top_n": top_n, "initial_capital": initial, "trailing_stop_pct": stop},
+        )
+        sm = res.get("summary") or {}
+        if sm.get("error"):
+            continue
+        start_label = aligned.index[test_start].date().isoformat()
+        end_label = aligned.index[test_end - 1].date().isoformat()
+        fold_results.append(
+            {
+                "fold": i + 1,
+                "window": f"{start_label} → {end_label}",
+                "net_return_pct": sm.get("net_return_pct"),
+                "cagr_pct": sm.get("cagr_pct"),
+                "max_drawdown_pct": sm.get("max_drawdown_pct"),
+                "sharpe": sm.get("sharpe"),
+                "win_rate_pct": sm.get("win_rate_pct"),
+                "trades": sm.get("trades"),
+            }
+        )
+
+    if not fold_results:
+        return _empty_result(p, "No folds could be evaluated from the stored history.")
+
+    returns = [f["net_return_pct"] for f in fold_results if f["net_return_pct"] is not None]
+    cagrs = [f["cagr_pct"] for f in fold_results if f["cagr_pct"] is not None]
+    dds = [f["max_drawdown_pct"] for f in fold_results if f["max_drawdown_pct"] is not None]
+    sharpes = [f["sharpe"] for f in fold_results if f["sharpe"] is not None]
+    win_rates = [f["win_rate_pct"] for f in fold_results if f["win_rate_pct"] is not None]
+
+    summary = {
+        "folds_evaluated": len(fold_results),
+        "fold_months": fold_months,
+        "avg_return_pct": round(sum(returns) / len(returns), 2) if returns else None,
+        "hit_rate_pct": round(sum(1 for r in returns if r > 0) / len(returns) * 100, 1) if returns else None,
+        "avg_cagr_pct": round(sum(cagrs) / len(cagrs), 2) if cagrs else None,
+        "worst_max_drawdown_pct": round(min(dds), 2) if dds else None,
+        "avg_sharpe": round(sum(sharpes) / len(sharpes), 2) if sharpes else None,
+        "avg_win_rate_pct": round(sum(win_rates) / len(win_rates), 1) if win_rates else None,
+        "total_trades": sum(f["trades"] or 0 for f in fold_results),
+        "run_date": date.today().isoformat(),
+    }
+    return {"params": p, "folds": fold_results, "summary": summary, "warnings": []}
+
+
 def _ret(series: pd.Series, days: int) -> float | None:
     if len(series) < days + 1:
         return None

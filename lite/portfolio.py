@@ -40,9 +40,11 @@ def attach_position_scores(records: list[dict]) -> list[dict]:
 
 
 def build_allocation(records: list[dict], equity_pct: float, top_n: int = 8) -> list[dict]:
-    """Rank-weighted allocation over the top-N by position score.
+    """Conviction-weighted allocation over the top-N by position score.
 
-    weight_i ∝ (top_n - i + 1), scaled so the whole book sums to equity_pct.
+    weight_i ∝ pos_score², normalized so the book sums to equity_pct. Squaring
+    concentrates capital in the highest-conviction names (92 → 89 → 88 → 76
+    becomes ~18% → 17% → 16% → 12%, not a flat linear taper).
     """
     ranked = sorted(
         [r for r in records if r.get("pos_score") is not None],
@@ -50,11 +52,11 @@ def build_allocation(records: list[dict], equity_pct: float, top_n: int = 8) -> 
         reverse=True,
     )[: max(1, min(int(top_n), 25))]
 
-    n = len(ranked)
-    total = n * (n + 1) / 2.0  # 1 + 2 + ... + n
+    squares = [(r.get("pos_score") or 0.0) ** 2 for r in ranked]
+    total = sum(squares)
     out = []
-    for i, r in enumerate(ranked):
-        w = (n - i) / total * equity_pct
+    for r, sq in zip(ranked, squares):
+        w = (sq / total * equity_pct) if total > 0 else equity_pct / len(ranked)
         out.append(
             {
                 "symbol": r.get("symbol"),

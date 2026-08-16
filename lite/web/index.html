@@ -159,6 +159,11 @@ function Delta({v, suffix=''}){
   return <span className="num" style={{color:c,fontFamily:'var(--mono)',fontWeight:600}}>{v > 0 ? '▲' : '▼'} {v > 0 ? '+' : ''}{Number(v).toFixed(1)}{suffix}</span>;
 }
 function Bucket({b}){ return b ? <span className={`badge badge-${b}`}>{b}</span> : null; }
+function ConfCell({v}){
+  if (v == null || isNaN(v)) return <span style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>—</span>;
+  const c = v >= 80 ? 'var(--acid)' : v >= 60 ? 'var(--gold)' : 'var(--rose)';
+  return <span style={{fontFamily:'var(--mono)',fontWeight:600,color:c}}>{fmt(v,0)}%</span>;
+}
 function Loader(){ return <div style={{display:'flex',gap:4,padding:'20px 0',justifyContent:'center'}}><span className="loading-dot"/><span className="loading-dot"/><span className="loading-dot"/></div>; }
 function Empty({icon,text,children}){ return <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-txt">{text}</div>{children}</div>; }
 
@@ -295,7 +300,7 @@ function Dashboard(){
 function Screener(){
   const [rows,setRows] = useState(null);
   const [err,setErr] = useState(null);
-  const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',bucket:'',sort:'opp'});
+  const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',min_conf:'',bucket:'',sort:'opp'});
   const [loading,setLoading] = useState(false);
 
   const load = useCallback(()=>{
@@ -306,6 +311,7 @@ function Screener(){
     if (f.min_roce) q.set('min_roce', f.min_roce);
     if (f.min_growth) q.set('min_growth', f.min_growth);
     if (f.max_pe) q.set('max_pe', f.max_pe);
+    if (f.min_conf) q.set('min_conf', f.min_conf);
     if (f.bucket) q.set('bucket', f.bucket);
     q.set('sort', f.sort);
     j('/api/scores?'+q.toString()).then(setRows).catch(e=>setErr(e.message)).finally(()=>setLoading(false));
@@ -323,6 +329,7 @@ function Screener(){
           <label>Min ROCE %<input type="number" placeholder="0" value={f.min_roce} onChange={set('min_roce')}/></label>
           <label>Min Growth %<input type="number" placeholder="0" value={f.min_growth} onChange={set('min_growth')}/></label>
           <label>Max PE<input type="number" placeholder="∞" value={f.max_pe} onChange={set('max_pe')}/></label>
+          <label>Min Conf %<input type="number" placeholder="0" value={f.min_conf} onChange={set('min_conf')}/></label>
           <label>Bucket
             <select value={f.bucket} onChange={set('bucket')}>
               <option value="">All</option>
@@ -397,7 +404,7 @@ function ElitePicks(){
           <div className="tbl-wrap">
             <table>
               <thead><tr>
-                <th>Rank</th><th>Symbol</th><th>Bucket</th>
+                <th>Rank</th><th>Symbol</th><th>Bucket</th><th className="num">Conf</th>
                 <th className="num">Score</th><th className="num">Δ Score</th><th className="num">Quality</th><th className="num">Growth</th>
                 <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th><th className="num">Accum</th>
               </tr></thead>
@@ -407,6 +414,7 @@ function ElitePicks(){
                     <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td><Bucket b={r.mb_bucket}/></td>
+                    <td className="num"><ConfCell v={r.data_confidence}/></td>
                     <td className="num"><ScoreCell score={r.score}/></td>
                     <td className="num"><Delta v={r.score_delta}/></td>
                     <td className="num">{fmt(r.quality,0)}</td>
@@ -431,7 +439,7 @@ function ElitePicks(){
               <thead><tr>
                 <th className="num">MB Rank</th><th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Δ MB</th><th className="num">Rules</th>
                 <th className="num">Growth</th><th className="num">Quality</th><th className="num">Momentum</th>
-                <th className="num">Mkt Cap</th>
+                <th className="num">Compounder</th><th className="num">Mkt Cap</th>
               </tr></thead>
               <tbody>
                 {mbs.slice(0,30).map(r=>(
@@ -449,6 +457,7 @@ function ElitePicks(){
                     <td className="num">{fmt(r.growth,0)}</td>
                     <td className="num">{fmt(r.quality,0)}</td>
                     <td className="num">{fmt(r.momentum,0)}</td>
+                    <td className="num">{fmt(r.compounder_score,0)}</td>
                     <td className="num">{fmtCr(r.market_cap)}</td>
                   </tr>
                 ))}
@@ -632,10 +641,23 @@ function Backtest(){
   };
   const set = k => e => setParams({...params,[k]:e.target.value});
   const s = result ? result.summary : null;
+  const [wf,setWf] = useState(null);
+  const [wfRunning,setWfRunning] = useState(false);
+  const [wfErr,setWfErr] = useState(null);
+  const runWF = async ()=>{
+    setWfRunning(true); setWfErr(null); setWf(null);
+    try {
+      const r = await j('/api/backtest/walk-forward', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({fold_months:12, folds:3, top_n:parseInt(params.top_n)||10,
+          initial_capital:parseFloat(params.initial)||1000000, trailing_stop_pct:parseFloat(params.stop)||0.2})});
+      setWf(r);
+    } catch(e){ setWfErr(e.detail || e.message); }
+    finally { setWfRunning(false); }
+  };
 
   return (
     <div className="wrap anim">
-      <div><div className="screen-title">Backtest</div><div className="screen-sub">Momentum + trend strategy · monthly rebalance · trailing stop</div></div>
+      <div><div className="screen-title">Backtest</div><div className="screen-sub">Momentum + trend strategy · monthly rebalance · trailing stop · walk-forward</div></div>
 
       <div className="card">
         <div className="filter-row">
@@ -644,8 +666,10 @@ function Backtest(){
           <label>Initial Capital (₹)<input type="number" value={params.initial} onChange={set('initial')}/></label>
           <label>Trailing Stop %<input type="number" step="0.05" value={params.stop} onChange={set('stop')}/></label>
           <button className="btn" disabled={running} onClick={run}>{running ? 'Running…' : '▶ Run Backtest'}</button>
+          <button className="btn-ghost" disabled={running || wfRunning} onClick={runWF}>{wfRunning ? 'Running…' : '⇄ Walk-Forward (3×12m)'}</button>
         </div>
         {err && <div className="note" style={{color:'var(--rose)',marginTop:10}}>{err}</div>}
+        {wfErr && <div className="note" style={{color:'var(--rose)',marginTop:10}}>{wfErr}</div>}
       </div>
 
       {result && s && !s.error && (
@@ -704,6 +728,35 @@ function Backtest(){
             )}
           </div>
         </>
+      )}
+
+      {wf && wf.summary && !wf.summary.error && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Walk-Forward · {wf.summary.folds_evaluated} × {wf.summary.fold_months}m folds</span><span className="note">same parameter-free strategy across consecutive windows — flags overfitting / regime dependence</span></div>
+          <div className="grid3">
+            <div className="card"><div className="stat"><span className={`stat-val ${wf.summary.avg_return_pct>=0?'acid':'rose'}`}>{pct(wf.summary.avg_return_pct)}</span><span className="stat-key">Avg Return / Fold</span></div></div>
+            <div className="card"><div className="stat"><span className={`stat-val ${wf.summary.hit_rate_pct>=60?'acid':wf.summary.hit_rate_pct>=40?'gold':'rose'}`}>{fmt(wf.summary.hit_rate_pct,0)}%</span><span className="stat-key">Fold Hit Rate</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val rose">{fmt(wf.summary.worst_max_drawdown_pct,1)}%</span><span className="stat-key">Worst Fold Drawdown</span></div></div>
+          </div>
+          <div className="tbl-wrap" style={{marginTop:12}}>
+            <table>
+              <thead><tr><th className="num">Fold</th><th>Window</th><th className="num">Return</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Trades</th></tr></thead>
+              <tbody>
+                {wf.folds.map(f=>(
+                  <tr key={f.fold}>
+                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>#{f.fold}</td>
+                    <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{f.window}</td>
+                    <td className={`num ${f.net_return_pct>=0?'up':'dn'}`}>{pct(f.net_return_pct)}</td>
+                    <td className={`num ${f.cagr_pct>=0?'up':'dn'}`}>{pct(f.cagr_pct)}</td>
+                    <td className="num rose">{fmt(f.max_drawdown_pct,1)}%</td>
+                    <td className="num gold">{fmt(f.sharpe,2)}</td>
+                    <td className="num">{f.trades}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {runs.length > 0 && (

@@ -19,7 +19,7 @@ import pandas as pd
 
 from . import db
 
-HISTORY_PERIOD = "2y"        # enough bars for 200-SMA + 52w + 12M momentum
+HISTORY_PERIOD = "5y"        # enough bars for 200-SMA + 52w + 12M momentum + walk-forward folds
 FUNDAMENTAL_TTL_HOURS = 24
 PRICE_TTL_HOURS = 4
 _DOWNLOAD_CHUNK = 25
@@ -289,6 +289,235 @@ def _quarterly_metrics(symbol: str) -> dict:
         return out
 
 
+# ── Annual financial history (stability / compounder / data quality) ────────
+
+def _stmt_row(stmt, label: str):
+    """A row of an annual statement as a Series indexed by fiscal year-end.
+
+    Handles duplicate row labels (yfinance sometimes lists a line twice).
+    """
+    if stmt is None or stmt.empty or label not in stmt.index:
+        return None
+    s = stmt.loc[label]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[0]
+    s = pd.to_numeric(s, errors="coerce").dropna().sort_index()
+    return s if len(s) else None
+
+
+def _year_value(row, year_ts, max_gap_days: int = 400) -> Optional[float]:
+    """Value of a row at a fiscal year-end, tolerating slight date mismatches
+    between the income statement / balance sheet / cashflow columns."""
+    if row is None:
+        return None
+    if year_ts in row.index:
+        return float(row.loc[year_ts])
+    best = None
+    for ts in row.index:
+        gap = abs((ts - year_ts).days)
+        if gap <= max_gap_days and (best is None or gap < best[0]):
+            best = (gap, ts)
+    return float(row.loc[best[1]]) if best else None
+
+
+def _combine_rows(*rows) -> Optional[pd.Series]:
+    """Sum several series aligned on their fiscal year-end index."""
+    out = None
+    for r in rows:
+        if r is None:
+            continue
+        r = r.add(0.0)
+        out = r if out is None else out.add(r, fill_value=0.0)
+    return out
+
+
+def _stability_score(values: list[Optional[float]]) -> Optional[float]:
+    """0-100 consistency: inverse coefficient of variation across ≥3 years.
+
+    ROE 22/23/21/24/22 (cv≈0.05) scores ~97; 8/35/12/40/10 (cv≈0.65) ~57.
+    """
+    vals = [v for v in values if v is not None]
+    if len(vals) < 3:
+        return None
+    mean = sum(vals) / len(vals)
+    if abs(mean) < 1e-9:
+        return None
+    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    cv = math.sqrt(var) / abs(mean)
+    return max(0.0, min(100.0, 100.0 * (1 - min(cv / 1.5, 1.0))))
+
+
+def _cagr(values: list[Optional[float]]) -> Optional[float]:
+    """Annualized growth across the available yearly points (as a fraction)."""
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2:
+        return None
+    first, last = vals[0], vals[-1]
+    if first <= 0 or last <= 0:
+        return None
+    return (last / first) ** (1 / (len(vals) - 1)) - 1
+
+
+def _growth_vol(values: list[Optional[float]]) -> Optional[float]:
+    """Std-dev of YoY growth rates (fraction) — earnings/sales volatility."""
+    vals = [v for v in values if v is not None]
+    if len(vals) < 3:
+        return None
+    growths = []
+    for i in range(1, len(vals)):
+        base, cur = vals[i - 1], vals[i]
+        if base is not None and base > 0 and cur is not None:
+            growths.append(cur / base - 1)
+    if len(growths) < 2:
+        return None
+    mean = sum(growths) / len(growths)
+    return math.sqrt(sum((g - mean) ** 2 for g in growths) / len(growths))
+
+
+def _debt_trend_score(de_list: list[Optional[float]]) -> Optional[float]:
+    """0-100: latest D/E vs the prior-years average (falling debt scores higher)."""
+    vals = [v for v in de_list if v is not None]
+    if len(vals) < 2:
+        return None
+    latest = vals[-1]
+    prior = vals[:-1]
+    mean_prior = sum(prior) / len(prior)
+    if mean_prior <= 0:
+        return 100.0 if latest <= 0.2 else 40.0
+    reduction = (mean_prior - latest) / mean_prior
+    return max(0.0, min(100.0, 50.0 + reduction * 50.0))
+
+
+def _financial_history(symbol: str) -> dict:
+    """Fetch 5y annual statements and derive stability / compounder metrics.
+
+    Returns a dict of derived metrics plus "_rows" (per-fiscal-year raw rows
+    to persist). Every field degrades to None when statements are missing.
+    """
+    out = {
+        "roe_stability": None,
+        "roce_stability": None,
+        "profit_stability": None,
+        "sales_stability": None,
+        "margin_stability": None,
+        "fcf_stability": None,
+        "sales_cagr_5y": None,
+        "profit_cagr_5y": None,
+        "fcf_cagr_5y": None,
+        "debt_trend": None,
+        "revenue_accel_annual": None,
+        "earnings_vol": None,
+        "sales_vol": None,
+        "_rows": [],
+    }
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker(symbol)
+        inc = ticker.income_stmt
+        if inc is None or inc.empty:
+            return out
+        rev = _stmt_row(inc, "Total Revenue")
+        ni = _stmt_row(inc, "Net Income") or _stmt_row(inc, "Net Income Common Stockholders")
+        if rev is None or ni is None:
+            return out
+        bs = ticker.balance_sheet
+        equity = _stmt_row(bs, "Stockholders Equity") or _stmt_row(bs, "Common Stock Equity")
+        debt = _stmt_row(bs, "Total Debt") or _combine_rows(
+            _stmt_row(bs, "Long Term Debt"), _stmt_row(bs, "Current Debt")
+        )
+        cf = ticker.cashflow
+        ocf = _stmt_row(cf, "Operating Cash Flow")
+        capex = _stmt_row(cf, "Capital Expenditure")
+        fcf_row = _stmt_row(cf, "Free Cash Flow")
+        ebitda = _stmt_row(inc, "EBITDA") or _stmt_row(inc, "EBIT") or _stmt_row(inc, "Operating Income")
+
+        rows = []
+        for ts in sorted(rev.index, reverse=True)[:6]:
+            rv = _year_value(rev, ts)
+            ni_v = _year_value(ni, ts)
+            eq = _year_value(equity, ts)
+            db_ = _year_value(debt, ts)
+            oc = _year_value(ocf, ts)
+            cp = _year_value(capex, ts)
+            eb = _year_value(ebitda, ts)
+            fcf_v = None
+            if oc is not None and cp is not None:
+                fcf_v = oc - abs(cp)
+            else:
+                fcf_v = _year_value(fcf_row, ts)
+            ce = (eq + db_) if (eq is not None and db_ is not None) else None
+            row = {
+                "year": ts.year,
+                "revenue": rv,
+                "net_income": ni_v,
+                "fcf": fcf_v,
+                "total_debt": db_,
+                "equity": eq,
+                "roe": (ni_v / eq * 100) if (eq and eq > 0 and ni_v is not None) else None,
+                "roce": (eb / ce * 100) if (ce and ce > 0 and eb is not None) else None,
+                "net_margin": (ni_v / rv * 100) if (rv and rv > 0 and ni_v is not None) else None,
+                "fcf_margin": (fcf_v / rv * 100) if (rv and rv > 0 and fcf_v is not None) else None,
+                "debt_equity": (db_ / eq) if (eq and eq > 0 and db_ is not None) else None,
+            }
+            rows.append(row)
+        if len(rows) < 3:
+            return out
+        rows = [r for r in rows if r["revenue"] is not None]
+        if len(rows) < 2:
+            return out
+
+        rev_vals = [r["revenue"] for r in rows]
+        ni_vals = [r["net_income"] for r in rows]
+        fcf_vals = [r["fcf"] for r in rows]
+        roe_vals = [r["roe"] for r in rows]
+        roce_vals = [r["roce"] for r in rows]
+        margin_vals = [r["net_margin"] for r in rows]
+        fcf_margin_vals = [r["fcf_margin"] for r in rows]
+        de_vals = [r["debt_equity"] for r in rows]
+
+        out["roe_stability"] = _stability_score(roe_vals)
+        out["roce_stability"] = _stability_score(roce_vals)
+        out["profit_stability"] = _stability_score(ni_vals)
+        out["sales_stability"] = _stability_score(rev_vals)
+        out["margin_stability"] = _stability_score(margin_vals)
+        out["fcf_stability"] = _stability_score(fcf_margin_vals)
+        out["sales_cagr_5y"] = _cagr(rev_vals)
+        out["profit_cagr_5y"] = _cagr(ni_vals)
+        out["fcf_cagr_5y"] = _cagr(fcf_vals)
+        out["debt_trend"] = _debt_trend_score(de_vals)
+        out["earnings_vol"] = _growth_vol(ni_vals)
+        out["sales_vol"] = _growth_vol(rev_vals)
+        annual_growths = [
+            (rev_vals[i] / rev_vals[i - 1] - 1) if rev_vals[i - 1] and rev_vals[i - 1] > 0 else None
+            for i in range(1, len(rev_vals))
+        ]
+        out["revenue_accel_annual"] = _trend_score(annual_growths)
+        out["_rows"] = rows
+        return out
+    except Exception as exc:  # pragma: no cover - network
+        print(f"  ⚠️ annual history failed for {symbol}: {exc}")
+        return out
+
+
+def _data_confidence(f: dict) -> float:
+    """0-100: share of core fundamentals actually populated for this symbol.
+
+    Garbage/partial data can no longer rank as highly as fully covered names.
+    """
+    keys = [
+        "roe", "roce", "debt_equity", "sales_growth", "profit_growth",
+        "pe", "pb", "fcf_margin", "eps_accel", "margin_expansion",
+    ]
+    present = 0
+    for k in keys:
+        if f.get(k) is not None:
+            present += 1
+        elif k == "eps_accel" and f.get("eps_growth") is not None:
+            present += 1
+    return round(present / len(keys) * 100)
+
+
 def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dict]:
     """Fetch fundamentals for symbols missing a fresh cached copy."""
     import yfinance as yf
@@ -321,6 +550,13 @@ def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dic
             metrics["margin_expansion"] = q["margin_expansion"]
             if q["quarters"]:
                 db.upsert_quarterly_results(sym, q["quarters"])
+            # 5y annual statements → stability / CAGR / debt trend metrics
+            hist = _financial_history(sym)
+            hist_rows = hist.pop("_rows", [])
+            metrics.update({k: v for k, v in hist.items() if v is not None})
+            if hist_rows:
+                db.upsert_financial_history(sym, hist_rows)
+            metrics["data_confidence"] = _data_confidence(metrics)
             db.upsert_fundamentals(metrics)
             return sym, metrics
         except Exception as exc:

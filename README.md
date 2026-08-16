@@ -8,10 +8,11 @@ An institutional-grade quantitative screening and scoring ecosystem designed for
 
 **Sovereign Lite** (default — this is what runs in the preview and is recommended for a single user on SQLite + yFinance):
 
-- SQLite only (5 core tables + score history + quarterly results + MB candidate tracking)
+- SQLite only (5 core tables + score history + quarterly results + MB candidate tracking + 5y financial history)
 - yFinance-only data layer (`lite/data.py`) — no API keys, no Redis/Celery
 - 5-screen React dashboard: Dashboard · Screener · Elite Picks · Portfolio · Backtest
-- 5-factor regime-aware scoring (Quality/Growth/Momentum/Valuation/Risk), 100-Bagger Detector with MB v2 weights, one-click backtest
+- 5-factor regime-aware scoring (Quality/Growth/Momentum/Valuation/Risk) with **data-confidence dampening** (partial fundamentals can't rank high), multi-factor RS (1/3/6/12M percentiles), **institutional quality** (5y stability), earnings-revision proxy, sector rotation (RS + growth + breadth + momentum), conviction-weighted portfolio construction, 100-Bagger Detector with MB v3 (incl. 5y **compounder score**), one-click backtest + **walk-forward validation** (3×12-month folds)
+- 5y price history stored, so backtests and walk-forward folds cover real multi-year windows
 - Entry point: `python3 lite_main.py` · deps: `requirements-lite.txt`
 
 **Sovereign Pro** (optional, legacy enterprise stack) — moved to `pro/` (`pro/modules/`, `pro/worker/`, `pro/monitoring/`, `pro/api/`). XGBoost/SHAP hybrid scoring, Redis + Celery distributed workers, Prometheus observability, Alpha Vantage multi-source ingestion. Loaded only if you explicitly run the Pro entry points and install its deps — it is never imported by the Lite app:

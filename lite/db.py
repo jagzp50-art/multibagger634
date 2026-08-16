@@ -53,7 +53,21 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     promoter_holding REAL,
     sector          TEXT,
     name            TEXT,
-    last_updated    TEXT
+    last_updated    TEXT,
+    data_confidence REAL,
+    roe_stability   REAL,
+    roce_stability  REAL,
+    profit_stability REAL,
+    sales_stability REAL,
+    margin_stability REAL,
+    fcf_stability   REAL,
+    sales_cagr_5y   REAL,
+    profit_cagr_5y  REAL,
+    fcf_cagr_5y     REAL,
+    debt_trend      REAL,
+    revenue_accel_annual REAL,
+    earnings_vol    REAL,
+    sales_vol       REAL
 );
 CREATE TABLE IF NOT EXISTS scores (
     symbol   TEXT PRIMARY KEY,
@@ -68,15 +82,21 @@ CREATE TABLE IF NOT EXISTS scores (
     mb_checklist TEXT,
     regime   TEXT,
     rank     INTEGER,
-    rs_rank  INTEGER,
-    rs_6m    INTEGER,
-    rs_12m   INTEGER,
+    rs_rank  REAL,
+    rs_1m    REAL,
+    rs_3m    REAL,
+    rs_6m    REAL,
+    rs_12m   REAL,
     rs_boost REAL,
     accumulation REAL,
     pos_score REAL,
     opp_score REAL,
     sector_boost REAL,
     trend_ok INTEGER,
+    institutional_quality REAL,
+    revision_score REAL,
+    compounder_score REAL,
+    data_confidence REAL,
     updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS backtests (
@@ -106,6 +126,15 @@ CREATE TABLE IF NOT EXISTS score_history (
     mb_bucket  TEXT,
     trend_ok   INTEGER,
     regime     TEXT,
+    quality    REAL,
+    growth     REAL,
+    momentum   REAL,
+    valuation  REAL,
+    risk       REAL,
+    rs_rank    REAL,
+    sector_boost REAL,
+    opp_score  REAL,
+    data_confidence REAL,
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_score_history_sym ON score_history (symbol, scan_date);
@@ -120,6 +149,21 @@ CREATE TABLE IF NOT EXISTS mb_candidates (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mb_candidates_sym ON mb_candidates (symbol, scan_date);
+CREATE TABLE IF NOT EXISTS financial_history (
+    symbol     TEXT NOT NULL,
+    year       INTEGER NOT NULL,
+    revenue    REAL,
+    net_income REAL,
+    fcf        REAL,
+    total_debt REAL,
+    equity     REAL,
+    roe        REAL,
+    net_margin REAL,
+    fcf_margin REAL,
+    debt_equity REAL,
+    PRIMARY KEY (symbol, year)
+);
+CREATE INDEX IF NOT EXISTS idx_financial_history_sym ON financial_history (symbol, year);
 """
 
 
@@ -131,25 +175,68 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_columns(conn: sqlite3.Connection, table: str, columns: Iterable[str]) -> None:
+    """Add any missing columns (all REAL/TEXT — SQLite is dynamically typed)."""
+    existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for col in columns:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} REAL")
+
+
 def init_db(universe: Optional[Iterable[dict]] = None) -> None:
     """Create tables (idempotent) and seed the universe if empty."""
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
         # Lightweight migration: add columns added after the table existed.
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(scores)").fetchall()}
-        if "mb_checklist" not in cols:
-            conn.execute("ALTER TABLE scores ADD COLUMN mb_checklist TEXT")
-        fcols = {r[1] for r in conn.execute("PRAGMA table_info(fundamentals)").fetchall()}
-        if "margin_expansion" not in fcols:
-            conn.execute("ALTER TABLE fundamentals ADD COLUMN margin_expansion REAL")
-        if "rev_accel" not in fcols:
-            conn.execute("ALTER TABLE fundamentals ADD COLUMN rev_accel REAL")
-        if "pat_accel" not in fcols:
-            conn.execute("ALTER TABLE fundamentals ADD COLUMN pat_accel REAL")
-        for col in ("rs_6m", "rs_12m", "rs_boost", "accumulation", "pos_score", "opp_score", "sector_boost"):
-            if col not in cols:
-                conn.execute(f"ALTER TABLE scores ADD COLUMN {col} REAL")
+        _migrate_columns(
+            conn,
+            "fundamentals",
+            [
+                "margin_expansion",
+                "rev_accel",
+                "pat_accel",
+                "data_confidence",
+                "roe_stability",
+                "roce_stability",
+                "profit_stability",
+                "sales_stability",
+                "margin_stability",
+                "fcf_stability",
+                "sales_cagr_5y",
+                "profit_cagr_5y",
+                "fcf_cagr_5y",
+                "debt_trend",
+                "revenue_accel_annual",
+                "earnings_vol",
+                "sales_vol",
+            ],
+        )
+        _migrate_columns(
+            conn,
+            "scores",
+            [
+                "mb_checklist",
+                "rs_6m",
+                "rs_12m",
+                "rs_1m",
+                "rs_3m",
+                "rs_boost",
+                "accumulation",
+                "pos_score",
+                "opp_score",
+                "sector_boost",
+                "institutional_quality",
+                "revision_score",
+                "compounder_score",
+                "data_confidence",
+            ],
+        )
+        _migrate_columns(
+            conn,
+            "score_history",
+            ["quality", "growth", "momentum", "valuation", "risk", "rs_rank", "sector_boost", "opp_score", "data_confidence"],
+        )
         conn.commit()
     finally:
         conn.close()
@@ -272,8 +359,13 @@ def upsert_fundamentals(f: dict) -> None:
             INSERT OR REPLACE INTO fundamentals
             (symbol, market_cap, roe, roce, debt_equity, sales_growth, profit_growth,
              pe, pb, fcf_margin, eps_growth, eps_accel, eps_quarters, margin_expansion,
-             rev_accel, pat_accel, promoter_holding, sector, name, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rev_accel, pat_accel, promoter_holding, sector, name, last_updated,
+             data_confidence, roe_stability, roce_stability, profit_stability,
+             sales_stability, margin_stability, fcf_stability, sales_cagr_5y,
+             profit_cagr_5y, fcf_cagr_5y, debt_trend, revenue_accel_annual,
+             earnings_vol, sales_vol)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f.get("symbol"),
@@ -296,6 +388,20 @@ def upsert_fundamentals(f: dict) -> None:
                 f.get("sector"),
                 f.get("name"),
                 datetime.now().isoformat(timespec="seconds"),
+                _num(f.get("data_confidence")),
+                _num(f.get("roe_stability")),
+                _num(f.get("roce_stability")),
+                _num(f.get("profit_stability")),
+                _num(f.get("sales_stability")),
+                _num(f.get("margin_stability")),
+                _num(f.get("fcf_stability")),
+                _num(f.get("sales_cagr_5y")),
+                _num(f.get("profit_cagr_5y")),
+                _num(f.get("fcf_cagr_5y")),
+                _num(f.get("debt_trend")),
+                _num(f.get("revenue_accel_annual")),
+                _num(f.get("earnings_vol")),
+                _num(f.get("sales_vol")),
             ),
         )
         conn.commit()
@@ -340,9 +446,12 @@ def upsert_scores(records: Iterable[dict]) -> None:
             """
             INSERT OR REPLACE INTO scores
             (symbol, score, quality, growth, momentum, valuation, risk,
-             mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_6m, rs_12m,
-             rs_boost, accumulation, pos_score, opp_score, sector_boost, trend_ok, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_1m, rs_3m,
+             rs_6m, rs_12m, rs_boost, accumulation, pos_score, opp_score, sector_boost,
+             trend_ok, institutional_quality, revision_score, compounder_score,
+             data_confidence, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -358,15 +467,21 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     json.dumps(r.get("mb_checklist") or []),
                     r.get("regime"),
                     r.get("rank"),
-                    r.get("rs_rank"),
-                    r.get("rs_6m"),
-                    r.get("rs_12m"),
+                    _num(r.get("rs_rank")),
+                    _num(r.get("rs_1m")),
+                    _num(r.get("rs_3m")),
+                    _num(r.get("rs_6m")),
+                    _num(r.get("rs_12m")),
                     _num(r.get("rs_boost")),
                     _num(r.get("accumulation")),
                     _num(r.get("pos_score")),
                     _num(r.get("opp_score")),
                     _num(r.get("sector_boost")),
                     int(bool(r.get("trend_ok"))),
+                    _num(r.get("institutional_quality")),
+                    _num(r.get("revision_score")),
+                    _num(r.get("compounder_score")),
+                    _num(r.get("data_confidence")),
                     datetime.now().isoformat(timespec="seconds"),
                 )
                 for r in records
@@ -446,14 +561,16 @@ def previous_score_snapshot() -> dict[str, dict]:
 
 
 def snapshot_scores(records: Iterable[dict], scan_date: str, regime: str) -> int:
-    """Append the current scan's scores/ranks to score_history."""
+    """Append the current scan's full factor breakdown to score_history."""
     conn = get_connection()
     ts = datetime.now().isoformat(timespec="microseconds")
     try:
         conn.executemany(
             "INSERT INTO score_history "
-            "(symbol, scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(symbol, scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime, "
+            " quality, growth, momentum, valuation, risk, rs_rank, sector_boost, opp_score, "
+            " data_confidence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     r["symbol"],
@@ -464,6 +581,15 @@ def snapshot_scores(records: Iterable[dict], scan_date: str, regime: str) -> int
                     r.get("mb_bucket"),
                     int(bool(r.get("trend_ok"))),
                     regime,
+                    _num(r.get("quality")),
+                    _num(r.get("growth")),
+                    _num(r.get("momentum")),
+                    _num(r.get("valuation")),
+                    _num(r.get("risk")),
+                    _num(r.get("rs_rank")),
+                    _num(r.get("sector_boost")),
+                    _num(r.get("opp_score")),
+                    _num(r.get("data_confidence")),
                     ts,
                 )
                 for r in records
@@ -479,7 +605,9 @@ def score_history_for(symbol: str, limit: int = 40) -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime "
+            "SELECT scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime, "
+            "quality, growth, momentum, valuation, risk, rs_rank, sector_boost, "
+            "opp_score, data_confidence "
             "FROM score_history WHERE symbol = ? ORDER BY id DESC LIMIT ?",
             (symbol, limit),
         ).fetchall()
@@ -647,6 +775,54 @@ def load_backtests(limit: int = 10) -> list[dict]:
                     d[k] = {}
             out.append(d)
         return out
+    finally:
+        conn.close()
+
+
+# ── Financial history (5y annual statements → stability metrics) ───────────
+
+def upsert_financial_history(symbol: str, rows: Iterable[dict]) -> int:
+    """Store per-fiscal-year financials (revenue / net income / FCF / debt / equity)."""
+    conn = get_connection()
+    n = 0
+    try:
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO financial_history "
+                "(symbol, year, revenue, net_income, fcf, total_debt, equity, roe, "
+                " net_margin, fcf_margin, debt_equity) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    symbol,
+                    int(r["year"]),
+                    _num(r.get("revenue")),
+                    _num(r.get("net_income")),
+                    _num(r.get("fcf")),
+                    _num(r.get("total_debt")),
+                    _num(r.get("equity")),
+                    _num(r.get("roe")),
+                    _num(r.get("net_margin")),
+                    _num(r.get("fcf_margin")),
+                    _num(r.get("debt_equity")),
+                ),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def load_financial_history(symbol: str) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT year, revenue, net_income, fcf, total_debt, equity, roe, "
+            "net_margin, fcf_margin, debt_equity "
+            "FROM financial_history WHERE symbol = ? ORDER BY year",
+            (symbol,),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

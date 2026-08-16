@@ -239,10 +239,13 @@ def test_build_allocation_rank_weighted():
 
 
 def test_opportunity_score_formula():
-    row = {"mb_score": 90, "rs_rank": 95, "eps_accel": 80, "trend_ok": True}
-    assert scoring.opportunity_score(row) == pytest.approx(0.4 * 90 + 0.3 * 95 + 0.2 * 80 + 0.1 * 100, abs=0.01)
-    weak = {"mb_score": 30, "rs_rank": 20, "eps_accel": 10, "trend_ok": False, "above_200": False}
+    # Opportunity 2.0: 30% MB · 25% RS · 20% accel · 15% Quality · 10% sector strength
+    row = {"mb_score": 90, "rs_rank": 95, "eps_accel": 80, "quality": 85, "sector_strength": 70}
+    assert scoring.opportunity_score(row) == pytest.approx(0.30 * 90 + 0.25 * 95 + 0.20 * 80 + 0.15 * 85 + 0.10 * 70, abs=0.01)
+    weak = {"mb_score": 30, "rs_rank": 20, "eps_accel": 10, "quality": 20, "sector_strength": 30}
     assert scoring.opportunity_score(weak) < 30
+    assert scoring.opportunity_score({"mb_score": 50}) is not None  # None-safe
+    assert scoring.opportunity_score({}) is None
 
 
 # ── Sector rotation ─────────────────────────────────────────────────────────
@@ -306,6 +309,114 @@ def test_trend_score_rewards_acceleration():
     decelerating = [0.38, 0.25, 0.18, 0.10]
     assert data._trend_score(accelerating) > data._trend_score(flat) > data._trend_score(decelerating)
     assert data._trend_score([0.20]) is None  # needs >= 2 points
+
+
+# ── Data confidence + institutional quality (Phases 1-2) ────────────────────
+
+def test_confidence_factor_penalizes_partial_data():
+    assert scoring.confidence_factor(100) == pytest.approx(1.0)
+    assert scoring.confidence_factor(50) == pytest.approx(0.75)
+    assert scoring.confidence_factor(0) == pytest.approx(0.5)
+    assert scoring.confidence_factor(None) == 1.0
+    assert scoring.apply_confidence(80.0, 50) == pytest.approx(60.0)
+    assert scoring.apply_confidence(80.0, None) == pytest.approx(80.0)
+
+
+def test_institutional_quality_prefers_stability():
+    stable = {"roe_stability": 95, "profit_stability": 92, "sales_stability": 90, "margin_stability": 88, "fcf_stability": 85}
+    volatile = {"roe_stability": 40, "profit_stability": 35, "sales_stability": 30, "margin_stability": 25, "fcf_stability": 20}
+    assert scoring.institutional_quality_score(stable) > scoring.institutional_quality_score(volatile) + 30
+    assert scoring.institutional_quality_score({}) is None
+
+
+def test_quality_includes_stability():
+    stable = {
+        "roe": 20, "roce": 25, "fcf_margin": 8, "debt_equity": 0.3, "sector": "Technology",
+        "roe_stability": 95, "profit_stability": 90, "sales_stability": 90, "margin_stability": 90, "fcf_stability": 90,
+    }
+    unstable = {"roe": 20, "roce": 25, "fcf_margin": 8, "debt_equity": 0.3, "sector": "Technology"}
+    assert scoring.quality_score(stable) > scoring.quality_score(unstable)
+
+
+def test_revision_score_rewards_acceleration():
+    strong = {"eps_accel": 90, "rev_accel": 85, "margin_expansion": 6.0, "revenue_accel_annual": 80}
+    weak = {"eps_accel": 15, "rev_accel": 10, "margin_expansion": -5.0, "revenue_accel_annual": 10}
+    assert scoring.revision_score(strong) > scoring.revision_score(weak) + 30
+    assert scoring.revision_score({}) is None
+
+
+def test_stability_and_cagr_helpers():
+    from lite import data
+
+    assert data._stability_score([22, 23, 21, 24, 22]) > data._stability_score([8, 35, 12, 40, 10])
+    assert data._stability_score([10, 20]) is None  # needs >= 3 points
+    assert data._cagr([100, 121]) == pytest.approx(0.21, abs=0.01)
+    assert data._cagr([-5, 10]) is None  # negative base -> None
+    assert data._growth_vol([100, 110, 121, 133]) is not None
+
+
+# ── Compounder (Phase 10) ───────────────────────────────────────────────────
+
+def test_compounder_prefers_consistent_5y_compounding():
+    from lite import multibagger
+
+    good = {"roce_stability": 90, "sales_cagr_5y": 0.20, "profit_cagr_5y": 0.25, "fcf_cagr_5y": 0.20, "debt_trend": 80}
+    weak = {"roce_stability": 30, "sales_cagr_5y": 0.02, "profit_cagr_5y": 0.0, "fcf_cagr_5y": -0.05, "debt_trend": 20}
+    assert multibagger.compounder_score(good) > multibagger.compounder_score(weak) + 20
+    assert multibagger.compounder_score({}) is None
+
+
+def test_mb_v3_attaches_compounder_and_uses_it():
+    from lite import multibagger
+
+    rec = {"symbol": "C.NS", "score": 70.0, "growth": 70.0, "quality": 70.0, "momentum": 70.0, "mb_ownership": 70.0, "rs_rank": 70.0}
+    f = {
+        "eps_accel": 80.0, "sales_growth": 25.0, "roce": 22.0, "margin_expansion": 6.0,
+        "debt_equity": 0.2, "pe": 15.0, "pb": 2.0, "roce_stability": 85.0, "sales_cagr_5y": 0.20,
+        "profit_cagr_5y": 0.22, "fcf_cagr_5y": 0.18, "debt_trend": 75.0,
+    }
+    out = multibagger.detect([rec], {"C.NS": f}, {"C.NS": {}})
+    row = out[0]
+    assert row["compounder_score"] is not None
+    assert row["compounder_score"] > 50
+    assert row["mb_score"] > 60
+
+
+# ── Walk-forward (Phase 8) ──────────────────────────────────────────────────
+
+def test_walk_forward_returns_folds_and_aggregate():
+    import pandas as pd
+
+    from lite import backtest
+
+    idx = pd.date_range("2021-01-01", periods=1150, freq="B")
+    n = len(idx)
+    winner = pd.Series([100 * (1.0009 ** i) for i in range(n)], index=idx)
+    flat = pd.Series([100.0] * n, index=idx)
+    frames = {
+        "WIN.NS": pd.DataFrame({"close": winner}),
+        "FLAT.NS": pd.DataFrame({"close": flat}),
+    }
+    res = backtest.walk_forward(frames, {"folds": 3, "fold_months": 12, "top_n": 1})
+    assert len(res["folds"]) == 3
+    assert res["summary"]["folds_evaluated"] == 3
+    assert res["summary"]["hit_rate_pct"] is not None
+    assert res["summary"]["avg_return_pct"] is not None
+    assert res["summary"]["worst_max_drawdown_pct"] is not None
+    for f in res["folds"]:
+        assert f["window"] and f["net_return_pct"] is not None
+
+
+def test_walk_forward_requires_history():
+    import pandas as pd
+
+    from lite import backtest
+
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    frames = {"A.NS": pd.DataFrame({"close": pd.Series([100.0] * 300, index=idx)})}
+    res = backtest.walk_forward(frames, {"folds": 3})
+    assert res["summary"].get("error")  # too little data
+    assert not res.get("folds")
 
 
 # ── MB candidates tracking ──────────────────────────────────────────────────
