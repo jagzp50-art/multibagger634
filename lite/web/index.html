@@ -79,8 +79,8 @@ tr:hover td{background:rgba(255,255,255,.015)}
 
 .badge{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:.3px}
 .badge-MULTIBAGGER{background:var(--acid-d);color:var(--acid);border:1px solid rgba(0,255,163,.25)}
-.badge-ELITE{background:var(--sky-d);color:var(--sky);border:1px solid rgba(61,158,255,.25)}
 .badge-STRONG{background:var(--gold-d);color:var(--gold);border:1px solid rgba(255,183,0,.25)}
+.badge-EMERGING{background:var(--sky-d);color:var(--sky);border:1px solid rgba(61,158,255,.25)}
 .badge-WATCHLIST{background:var(--bg3);color:var(--t3);border:1px solid var(--wire)}
 .rule{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:8px;font-weight:600;padding:2px 6px;border-radius:3px;margin:1px}
 .rule.pass{background:var(--acid-d);color:var(--acid)}
@@ -151,6 +151,12 @@ async function j(url, opts) {
 function ScoreCell({score}){
   const c = SCORE_COLOR(score);
   return <span><span className="sc-bar"><span className="sc-fill" style={{width:(score||0)+'%',background:c,display:'block'}}/></span><span style={{fontFamily:'var(--mono)',fontWeight:600,color:c}}>{fmt(score,0)}</span></span>;
+}
+function Delta({v, suffix=''}){
+  if (v == null || isNaN(v)) return <span style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>—</span>;
+  if (v === 0) return <span style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>•</span>;
+  const c = v > 0 ? 'var(--acid)' : 'var(--rose)';
+  return <span className="num" style={{color:c,fontFamily:'var(--mono)',fontWeight:600}}>{v > 0 ? '▲' : '▼'} {v > 0 ? '+' : ''}{Number(v).toFixed(1)}{suffix}</span>;
 }
 function Bucket({b}){ return b ? <span className={`badge badge-${b}`}>{b}</span> : null; }
 function Loader(){ return <div style={{display:'flex',gap:4,padding:'20px 0',justifyContent:'center'}}><span className="loading-dot"/><span className="loading-dot"/><span className="loading-dot"/></div>; }
@@ -246,7 +252,7 @@ function Dashboard(){
         ) : (
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th>Bucket</th><th className="num">Price</th><th className="num">Day %</th><th className="num">Score</th></tr></thead>
+              <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th>Bucket</th><th className="num">Price</th><th className="num">Day %</th><th className="num">Score</th><th className="num">Δ vs Last Scan</th></tr></thead>
               <tbody>
                 {top_picks.map((p,i)=>(
                   <tr key={p.symbol}>
@@ -257,6 +263,7 @@ function Dashboard(){
                     <td className="num">{fmtRs(p.price)}</td>
                     <td className={`num ${p.change_pct >= 0 ? 'up' : 'dn'}`}>{pct(p.change_pct)}</td>
                     <td className="num"><ScoreCell score={p.score}/></td>
+                    <td className="num"><Delta v={p.score_delta}/></td>
                   </tr>
                 ))}
               </tbody>
@@ -304,8 +311,8 @@ function Screener(){
             <select value={f.bucket} onChange={set('bucket')}>
               <option value="">All</option>
               <option value="MULTIBAGGER">Multibagger</option>
-              <option value="ELITE">Elite</option>
-              <option value="STRONG">Strong</option>
+              <option value="STRONG">Strong Candidate</option>
+              <option value="EMERGING">Emerging</option>
               <option value="WATCHLIST">Watchlist</option>
             </select>
           </label>
@@ -325,7 +332,7 @@ function Screener(){
             <table>
               <thead><tr>
                 <th>Rank</th><th>Symbol</th><th>Sector</th><th className="num">Score</th><th>Bucket</th>
-                <th className="num">ROE %</th><th className="num">ROCE %</th><th className="num">Growth %</th>
+                <th className="num">Δ Score</th><th className="num">ROE %</th><th className="num">ROCE %</th><th className="num">Growth %</th>
                 <th className="num">PE</th><th className="num">Mkt Cap</th><th className="num">Trend</th>
               </tr></thead>
               <tbody>
@@ -336,6 +343,7 @@ function Screener(){
                     <td style={{color:'var(--t2)'}}>{r.sector || '—'}</td>
                     <td className="num"><ScoreCell score={r.score}/></td>
                     <td><Bucket b={r.mb_bucket}/></td>
+                    <td className="num"><Delta v={r.score_delta}/></td>
                     <td className="num">{fmt(r.roe,1)}</td>
                     <td className="num">{fmt(r.roce,1)}</td>
                     <td className={`num ${r.sales_growth > 0 ? 'up' : 'dn'}`}>{fmt(r.sales_growth,1)}</td>
@@ -373,7 +381,7 @@ function ElitePicks(){
             <table>
               <thead><tr>
                 <th>Rank</th><th>Symbol</th><th>Bucket</th>
-                <th className="num">Score</th><th className="num">Quality</th><th className="num">Growth</th>
+                <th className="num">Score</th><th className="num">Δ Score</th><th className="num">Quality</th><th className="num">Growth</th>
                 <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th>
               </tr></thead>
               <tbody>
@@ -383,6 +391,7 @@ function ElitePicks(){
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td><Bucket b={r.mb_bucket}/></td>
                     <td className="num"><ScoreCell score={r.score}/></td>
+                    <td className="num"><Delta v={r.score_delta}/></td>
                     <td className="num">{fmt(r.quality,0)}</td>
                     <td className="num">{fmt(r.growth,0)}</td>
                     <td className="num">{fmt(r.momentum,0)}</td>

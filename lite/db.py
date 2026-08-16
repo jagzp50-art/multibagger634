@@ -80,6 +80,28 @@ CREATE TABLE IF NOT EXISTS backtests (
     summary    TEXT,
     created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS quarterly_results (
+    symbol     TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    quarter    TEXT,
+    revenue    REAL,
+    net_income REAL,
+    net_margin REAL,
+    PRIMARY KEY (symbol, period_end)
+);
+CREATE TABLE IF NOT EXISTS score_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol     TEXT NOT NULL,
+    scan_date  TEXT NOT NULL,
+    score      REAL,
+    rank       INTEGER,
+    mb_score   REAL,
+    mb_bucket  TEXT,
+    trend_ok   INTEGER,
+    regime     TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_score_history_sym ON score_history (symbol, scan_date);
 """
 
 
@@ -100,6 +122,9 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(scores)").fetchall()}
         if "mb_checklist" not in cols:
             conn.execute("ALTER TABLE scores ADD COLUMN mb_checklist TEXT")
+        fcols = {r[1] for r in conn.execute("PRAGMA table_info(fundamentals)").fetchall()}
+        if "margin_expansion" not in fcols:
+            conn.execute("ALTER TABLE fundamentals ADD COLUMN margin_expansion REAL")
         conn.commit()
     finally:
         conn.close()
@@ -221,9 +246,9 @@ def upsert_fundamentals(f: dict) -> None:
             """
             INSERT OR REPLACE INTO fundamentals
             (symbol, market_cap, roe, roce, debt_equity, sales_growth, profit_growth,
-             pe, pb, fcf_margin, eps_growth, eps_accel, eps_quarters,
+             pe, pb, fcf_margin, eps_growth, eps_accel, eps_quarters, margin_expansion,
              promoter_holding, sector, name, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f.get("symbol"),
@@ -239,6 +264,7 @@ def upsert_fundamentals(f: dict) -> None:
                 _num(f.get("eps_growth")),
                 _num(f.get("eps_accel")),
                 json.dumps(f.get("eps_quarters") or []),
+                _num(f.get("margin_expansion")),
                 _num(f.get("promoter_holding")),
                 f.get("sector"),
                 f.get("name"),
@@ -340,6 +366,129 @@ def latest_scan_regime() -> Optional[str]:
             "SELECT regime, updated_at FROM scores ORDER BY updated_at DESC LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ── Score history (trends) ─────────────────────────────────────────────────
+
+def latest_score_snapshot() -> dict[str, dict]:
+    """Most recent completed scan snapshot: {symbol: {score, rank, mb_score}}."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT MAX(created_at) AS ts FROM score_history"
+        ).fetchone()
+        ts = row["ts"] if row else None
+        if not ts:
+            return {}
+        rows = conn.execute(
+            "SELECT symbol, score, rank, mb_score FROM score_history WHERE created_at = ?",
+            (ts,),
+        ).fetchall()
+        return {r["symbol"]: dict(r) for r in rows}
+    finally:
+        conn.close()
+
+
+def previous_score_snapshot() -> dict[str, dict]:
+    """Second-newest scan snapshot — the comparison baseline for trends."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT created_at FROM score_history ORDER BY created_at DESC LIMIT 2"
+        ).fetchall()
+        if len(rows) < 2:
+            return {}
+        ts = rows[1]["created_at"]
+        rows2 = conn.execute(
+            "SELECT symbol, score, rank, mb_score FROM score_history WHERE created_at = ?",
+            (ts,),
+        ).fetchall()
+        return {r["symbol"]: dict(r) for r in rows2}
+    finally:
+        conn.close()
+
+
+def snapshot_scores(records: Iterable[dict], scan_date: str, regime: str) -> int:
+    """Append the current scan's scores/ranks to score_history."""
+    conn = get_connection()
+    ts = datetime.now().isoformat(timespec="microseconds")
+    try:
+        conn.executemany(
+            "INSERT INTO score_history "
+            "(symbol, scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["symbol"],
+                    scan_date,
+                    _num(r.get("score")),
+                    r.get("rank"),
+                    _num(r.get("mb_score")),
+                    r.get("mb_bucket"),
+                    int(bool(r.get("trend_ok"))),
+                    regime,
+                    ts,
+                )
+                for r in records
+            ],
+        )
+        conn.commit()
+        return len(records)
+    finally:
+        conn.close()
+
+
+def score_history_for(symbol: str, limit: int = 40) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime "
+            "FROM score_history WHERE symbol = ? ORDER BY id DESC LIMIT ?",
+            (symbol, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
+# ── Quarterly results ───────────────────────────────────────────────────────
+
+def upsert_quarterly_results(symbol: str, rows: Iterable[dict]) -> int:
+    conn = get_connection()
+    n = 0
+    try:
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO quarterly_results "
+                "(symbol, period_end, quarter, revenue, net_income, net_margin) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    symbol,
+                    r["period_end"],
+                    r.get("quarter"),
+                    _num(r.get("revenue")),
+                    _num(r.get("net_income")),
+                    _num(r.get("net_margin")),
+                ),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def load_quarterly_results(symbol: str, limit: int = 12) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT period_end, quarter, revenue, net_income, net_margin "
+            "FROM quarterly_results WHERE symbol = ? ORDER BY period_end DESC LIMIT ?",
+            (symbol, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
     finally:
         conn.close()
 

@@ -169,23 +169,35 @@ def _from_info(info: dict, symbol: str = "") -> dict:
     }
 
 
-def _earnings_acceleration(symbol: str) -> tuple[Optional[float], list[float]]:
-    """Quarterly YoY EPS growth from the quarterly income statement.
+def _quarterly_metrics(symbol: str) -> dict:
+    """Quarterly income-statement metrics for a symbol.
 
-    Returns (acceleration_score 0-100, last-4 quarterly YoY growth list).
-    Falls back to (None, []) when data is unavailable.
+    Returns {"eps_accel": 0-100 score, "eps_quarters": YoY growth list,
+    "margin_expansion": pp change in net margin (last 4Q avg vs prior 4Q avg),
+    "quarters": [{period_end, quarter, revenue, net_income, net_margin}]}.
+    Every field degrades to None/[] when the statement is unavailable.
     """
     import yfinance as yf
 
+    out = {"eps_accel": None, "eps_quarters": [], "margin_expansion": None, "quarters": []}
     try:
         ticker = yf.Ticker(symbol)
         stmt = ticker.quarterly_income_stmt
-        if stmt is None or stmt.empty or "Net Income" not in stmt.index:
-            return None, []
-        ni = stmt.loc["Net Income"].dropna().astype(float)
-        ni = ni.sort_index()
+        if stmt is None or stmt.empty:
+            return out
+        if "Net Income" in stmt.index:
+            ni = stmt.loc["Net Income"].dropna().astype(float).sort_index()
+        else:
+            ni = pd.Series(dtype=float)
+        rev = (
+            stmt.loc["Total Revenue"].dropna().astype(float).sort_index()
+            if "Total Revenue" in stmt.index
+            else pd.Series(dtype=float)
+        )
         if len(ni) < 5:
-            return None, []
+            return out
+
+        # YoY net-income growth per quarter → acceleration score
         growths = []
         for i in range(len(ni) - 4, len(ni)):
             base = ni.iloc[i - 4]
@@ -195,17 +207,40 @@ def _earnings_acceleration(symbol: str) -> tuple[Optional[float], list[float]]:
             else:
                 growths.append(max(min(cur / base - 1, 5.0), -5.0))
         valid = [g for g in growths if g is not None]
-        if len(valid) < 2:
-            return None, growths
-        latest = valid[-1]
-        slope = valid[-1] - valid[0]
-        base_score = 100 / (1 + math.exp(-(latest * 100 - 20) / 15))
-        slope_score = 100 / (1 + math.exp(-(slope * 100 - 5) / 10))
-        accel = max(0.0, min(100.0, base_score * 0.6 + slope_score * 0.4))
-        return accel, [round(g * 100, 1) if g is not None else None for g in growths]
+        if len(valid) >= 2:
+            latest = valid[-1]
+            slope = valid[-1] - valid[0]
+            base_score = 100 / (1 + math.exp(-(latest * 100 - 20) / 15))
+            slope_score = 100 / (1 + math.exp(-(slope * 100 - 5) / 10))
+            out["eps_accel"] = max(0.0, min(100.0, base_score * 0.6 + slope_score * 0.4))
+        out["eps_quarters"] = [round(g * 100, 1) if g is not None else None for g in growths]
+
+        # Net margin per quarter → margin-expansion signal (last 4Q avg vs prior 4Q avg)
+        margins = []
+        quarters = []
+        for period_end in ni.index[-8:]:
+            income = float(ni.loc[period_end]) if period_end in ni.index else None
+            revenue = float(rev.loc[period_end]) if period_end in rev.index else None
+            margin = (income / revenue * 100) if (income is not None and revenue and revenue > 0) else None
+            margins.append(margin)
+            quarters.append(
+                {
+                    "period_end": str(period_end.date()),
+                    "quarter": f"{period_end.year}Q{(period_end.month - 1) // 3 + 1}",
+                    "revenue": revenue,
+                    "net_income": income,
+                    "net_margin": margin,
+                }
+            )
+        recent = [m for m in margins[-4:] if m is not None]
+        prior = [m for m in margins[-8:-4] if m is not None]
+        if recent and prior:
+            out["margin_expansion"] = round(sum(recent) / len(recent) - sum(prior) / len(prior), 2)
+        out["quarters"] = quarters
+        return out
     except Exception as exc:  # pragma: no cover - network
         print(f"  ⚠️ quarterly stmt failed for {symbol}: {exc}")
-        return None, []
+        return out
 
 
 def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dict]:
@@ -231,9 +266,12 @@ def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dic
             info = ticker.info or {}
             metrics = _from_info(info, sym)
             metrics["symbol"] = sym
-            accel, quarters = _earnings_acceleration(sym)
-            metrics["eps_accel"] = accel
-            metrics["eps_quarters"] = quarters
+            q = _quarterly_metrics(sym)
+            metrics["eps_accel"] = q["eps_accel"]
+            metrics["eps_quarters"] = q["eps_quarters"]
+            metrics["margin_expansion"] = q["margin_expansion"]
+            if q["quarters"]:
+                db.upsert_quarterly_results(sym, q["quarters"])
             db.upsert_fundamentals(metrics)
             return sym, metrics
         except Exception as exc:

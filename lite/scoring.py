@@ -79,6 +79,14 @@ def quality_score(f: dict) -> Optional[float]:
     return _weighted([(roe, 0.35), (roce, 0.35), (fcf, 0.15), (debt, 0.15)])
 
 
+def margin_expansion_score(f: dict) -> Optional[float]:
+    """Net-margin acceleration in percentage points (positive = expanding)."""
+    me = f.get("margin_expansion")
+    if me is None:
+        return None
+    return sigmoid(me, 2.0, 3.0)
+
+
 def growth_score(f: dict) -> Optional[float]:
     sales = sigmoid(f.get("sales_growth"), 15, 10)
     profit = sigmoid(f.get("profit_growth"), 15, 15)
@@ -87,7 +95,8 @@ def growth_score(f: dict) -> Optional[float]:
         accel = sigmoid(f.get("eps_growth"), 20, 15)
     else:
         accel = _clamp(accel)
-    return _weighted([(sales, 0.40), (profit, 0.35), (accel, 0.25)])
+    margin = margin_expansion_score(f)
+    return _weighted([(sales, 0.35), (profit, 0.30), (accel, 0.20), (margin, 0.15)])
 
 
 def momentum_score(px: dict, benchmark_ret6: Optional[float]) -> Optional[float]:

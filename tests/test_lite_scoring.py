@@ -55,6 +55,12 @@ def test_valuation_lower_pe_scores_higher():
     assert scoring.valuation_score(cheap) > scoring.valuation_score(dear) + 20
 
 
+def test_margin_expansion_boosts_growth():
+    expanding = {"sales_growth": 15, "profit_growth": 15, "eps_accel": 50, "margin_expansion": 8.0}
+    contracting = {"sales_growth": 15, "profit_growth": 15, "eps_accel": 50, "margin_expansion": -8.0}
+    assert scoring.growth_score(expanding) > scoring.growth_score(contracting) + 10
+
+
 def test_momentum_trend_boost():
     up_trend = {"ret_6m": 0.3, "ret_12m": 0.5, "volume_ratio": 1.8, "rs_rank_score": 90.0, "trend_ok": True, "above_200": True}
     down = {"ret_6m": -0.2, "ret_12m": -0.1, "volume_ratio": 0.6, "rs_rank_score": 10.0, "trend_ok": False, "above_200": False}
@@ -138,9 +144,13 @@ def test_trend_template_requires_200_bars():
 
 def test_bucket_boundaries():
     assert multibagger.bucket_for(95) == "MULTIBAGGER"
-    assert multibagger.bucket_for(85) == "ELITE"
-    assert multibagger.bucket_for(70) == "STRONG"
+    assert multibagger.bucket_for(80) == "STRONG"
+    assert multibagger.bucket_for(70) == "EMERGING"
     assert multibagger.bucket_for(30) == "WATCHLIST"
+
+
+def test_mb_weights_sum_to_one():
+    assert sum(multibagger.MB_WEIGHTS.values()) == pytest.approx(1.0)
 
 
 def test_detect_attaches_rules_and_bucket():
@@ -151,12 +161,17 @@ def test_detect_attaches_rules_and_bucket():
         "quality": 95.0,
         "momentum": 85.0,
         "mb_ownership": 70.0,
+        "rs_rank": 99.0,
     }
     f = {
-        "sales_growth": 25.0,
-        "roce": 22.0,
-        "debt_equity": 0.2,
+        "sales_growth": 40.0,
+        "roce": 30.0,
+        "debt_equity": 0.1,
         "profit_growth": 30.0,
+        "eps_accel": 95.0,
+        "margin_expansion": 10.0,
+        "pe": 12.0,
+        "pb": 1.0,
         "market_cap": 3000.0,
     }
     px = {"dist_52w_high": 0.05, "volume_ratio": 2.0}
@@ -164,6 +179,40 @@ def test_detect_attaches_rules_and_bucket():
     assert len(out) == 1
     row = out[0]
     assert row["mb_rules_passed"] == 7
-    assert row["mb_score"] > 80
-    assert row["mb_bucket"] in ("ELITE", "MULTIBAGGER")
+    assert row["mb_score"] > 75
+    assert row["mb_bucket"] in ("STRONG", "MULTIBAGGER")
     assert len(row["mb_checklist"]) == 7
+
+
+def test_mb_uses_accel_over_single_quarter_growth():
+    # Weak single-quarter growth but strong acceleration → accel path wins
+    rec = {"symbol": "T.NS", "score": 60.0, "growth": 60.0, "quality": 60.0, "momentum": 60.0, "mb_ownership": 60.0, "rs_rank": 60.0}
+    f = {"eps_accel": 90.0, "eps_growth": 5.0, "sales_growth": 20.0, "roce": 20.0, "margin_expansion": 5.0, "debt_equity": 0.3, "pe": 15.0, "pb": 2.0}
+    out = multibagger.detect([rec], {"T.NS": f}, {"T.NS": {}})
+    assert out[0]["mb_score"] > 60
+
+
+# ── Score history (trends) ──────────────────────────────────────────────────
+
+def test_score_history_snapshot_and_previous(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "trends.db"))
+    db_mod.init_db()
+
+    recs = [
+        {"symbol": "A.NS", "score": 70.0, "rank": 1, "mb_score": 80.0, "mb_bucket": "STRONG", "trend_ok": True},
+        {"symbol": "B.NS", "score": 50.0, "rank": 2, "mb_score": 40.0, "mb_bucket": "WATCHLIST", "trend_ok": False},
+    ]
+    db_mod.snapshot_scores(recs, "2026-08-15", "BULL")
+    assert db_mod.latest_score_snapshot()["A.NS"]["score"] == 70.0
+    assert db_mod.previous_score_snapshot() == {}  # only one snapshot yet
+
+    recs2 = [
+        {"symbol": "A.NS", "score": 74.0, "rank": 1, "mb_score": 84.0, "mb_bucket": "STRONG", "trend_ok": True},
+        {"symbol": "B.NS", "score": 55.0, "rank": 2, "mb_score": 45.0, "mb_bucket": "WATCHLIST", "trend_ok": False},
+    ]
+    db_mod.snapshot_scores(recs2, "2026-08-16", "BULL")
+    assert db_mod.previous_score_snapshot()["A.NS"]["score"] == 70.0
+    hist = db_mod.score_history_for("A.NS")
+    assert [h["score"] for h in hist] == [70.0, 74.0]

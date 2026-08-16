@@ -83,7 +83,7 @@ def create_app() -> FastAPI:
         regime = _fresh_regime()
         scores = db.load_scores()
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
-        top = _merge(scores, fundas)
+        top = _with_prev(_merge(scores, fundas))
         top.sort(key=lambda r: r.get("score") or 0, reverse=True)
         picks = []
         for r in top[:5]:
@@ -101,6 +101,8 @@ def create_app() -> FastAPI:
                     "symbol": sym,
                     "name": r.get("name") or sym,
                     "score": r.get("score"),
+                    "score_delta": r.get("score_delta"),
+                    "rank_delta": r.get("rank_delta"),
                     "mb_bucket": r.get("mb_bucket"),
                     "price": px.get("close") if px else None,
                     "change_pct": change_pct,
@@ -153,7 +155,7 @@ def create_app() -> FastAPI:
             out.append(r)
         key = {"score": "score", "roe": "roe", "growth": "sales_growth", "pe": "pe"}.get(sort, "score")
         out.sort(key=lambda r: (r.get(key) if isinstance(r.get(key), (int, float)) else -1), reverse=True)
-        return _json_safe(out[: max(1, min(limit, 1000))])
+        return _json_safe(_with_prev(out)[: max(1, min(limit, 1000))])
 
     # ── Elite picks + multibagger detector ───────────────────────────────────
 
@@ -161,7 +163,7 @@ def create_app() -> FastAPI:
     def elite_picks(limit: int = 20):
         scores = db.load_scores()
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
-        rows = _merge(scores, fundas)
+        rows = _with_prev(_merge(scores, fundas))
         rows.sort(key=lambda r: r.get("score") or 0, reverse=True)
         return _json_safe(rows[: max(1, min(limit, 200))])
 
@@ -172,6 +174,16 @@ def create_app() -> FastAPI:
         rows = _merge(scores, fundas)
         rows.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)
         return _json_safe([r for r in rows if r.get("mb_checklist") is not None][:100])
+
+    # ── Score history + quarterly detail ─────────────────────────────────────
+
+    @app.get("/api/score-history/{symbol}")
+    def score_history(symbol: str, limit: int = 40):
+        return _json_safe(db.score_history_for(symbol, limit=max(1, min(limit, 200))))
+
+    @app.get("/api/quarterly/{symbol}")
+    def quarterly(symbol: str):
+        return _json_safe(db.load_quarterly_results(symbol, limit=12))
 
     # ── Scan ─────────────────────────────────────────────────────────────────
 
@@ -251,6 +263,29 @@ def _merge(scores: list[dict], fundas: dict[str, dict]) -> list[dict]:
         row["growth_metric"] = f.get("sales_growth")
         out.append(row)
     return out
+
+
+def _with_prev(rows: list[dict]) -> list[dict]:
+    """Attach previous-snapshot deltas (score/rank vs last scan) to each row."""
+    prev = db.previous_score_snapshot()
+    for r in rows:
+        old = prev.get(r.get("symbol", "")) or {}
+        cur_score = r.get("score")
+        prev_score = old.get("score")
+        cur_rank = r.get("rank")
+        prev_rank = old.get("rank")
+        r["prev_score"] = prev_score
+        r["prev_rank"] = prev_rank
+        r["score_delta"] = (
+            round(cur_score - prev_score, 1)
+            if cur_score is not None and prev_score is not None
+            else None
+        )
+        # Positive = moved up the ranking (lower number is better)
+        r["rank_delta"] = (
+            prev_rank - cur_rank if cur_rank is not None and prev_rank is not None else None
+        )
+    return rows
 
 
 def _json_safe(obj):

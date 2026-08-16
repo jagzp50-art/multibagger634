@@ -35,13 +35,31 @@ def _mc_ok(mc: Optional[float]) -> bool:
     return mc is not None and 500 <= mc <= 25_000
 
 
+# Multibagger Score v2 — dedicated formula (weights sum to 1.0):
+#   25% earnings acceleration · 20% sales growth · 15% ROCE · 15% relative
+#   strength · 10% margin expansion · 10% debt reduction · 5% valuation
+MB_WEIGHTS = {
+    "accel": 0.25,
+    "sales": 0.20,
+    "roce": 0.15,
+    "rs": 0.15,
+    "margin": 0.10,
+    "debt": 0.10,
+    "valuation": 0.05,
+}
+
+MB_BUCKETS = [
+    (90.0, "MULTIBAGGER"),
+    (75.0, "STRONG"),
+    (60.0, "EMERGING"),
+    (0.0, "WATCHLIST"),
+]
+
+
 def bucket_for(score: float) -> str:
-    if score >= 90:
-        return "MULTIBAGGER"
-    if score >= 80:
-        return "ELITE"
-    if score >= 60:
-        return "STRONG"
+    for threshold, name in MB_BUCKETS:
+        if score >= threshold:
+            return name
     return "WATCHLIST"
 
 
@@ -68,11 +86,35 @@ def detect(records: list[dict], fundamentals: dict[str, dict], prices: dict[str,
                 passed += 1
             checklist.append({"code": code, "label": label, "pass": ok})
 
-        growth = r.get("growth")
-        quality = r.get("quality")
-        momentum = r.get("momentum")
-        ownership = r.get("mb_ownership")
-        parts = [(growth, 0.30), (quality, 0.30), (momentum, 0.25), (ownership, 0.15)]
+        # MB v2 — dedicated multibagger formula (see MB_WEIGHTS).
+        accel = f.get("eps_accel")
+        if accel is None:
+            accel = scoring.sigmoid(f.get("eps_growth"), 20, 15)
+        else:
+            accel = scoring._clamp(accel, 0, 100)
+        sales = scoring.sigmoid(f.get("sales_growth"), 15, 10)
+        roce = scoring.sigmoid(f.get("roce"), 18, 10)
+        rs = r.get("rs_rank")
+        if rs is not None:
+            rs = scoring._clamp(rs, 0, 100)
+        margin = scoring.margin_expansion_score(f)
+        de = f.get("debt_equity")
+        if scoring.is_financial(f.get("sector")):
+            debt = 60.0
+        elif de is not None:
+            debt = 100 - scoring.sigmoid(de, 0.6, 0.5)
+        else:
+            debt = None
+        valuation = scoring.valuation_score(f)
+        parts = [
+            (accel, MB_WEIGHTS["accel"]),
+            (sales, MB_WEIGHTS["sales"]),
+            (roce, MB_WEIGHTS["roce"]),
+            (rs, MB_WEIGHTS["rs"]),
+            (margin, MB_WEIGHTS["margin"]),
+            (debt, MB_WEIGHTS["debt"]),
+            (valuation, MB_WEIGHTS["valuation"]),
+        ]
         mb = scoring._weighted(parts)
         mb = round(mb, 1) if mb is not None else 0.0
 
