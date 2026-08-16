@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — FastAPI application.
+Sovereign Lite v12 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -19,7 +19,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from . import alpha
+from . import VERSION, alpha
 from . import backtest as bt
 from . import breadth, data, db, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .pipeline import run_scan
@@ -36,6 +36,8 @@ _breadth_lock = threading.Lock()
 BREADTH_TTL_SECONDS = 5 * 60
 
 _scan_lock = threading.Lock()
+_last_scan_ts: float = 0.0  # scan cooldown: one scan per 60s (unless force)
+SCAN_COOLDOWN_SECONDS = 60
 
 
 def _fresh_breadth() -> dict:
@@ -60,7 +62,7 @@ def _recent_watchlist(limit: int = 10) -> list[dict]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Sovereign Lite v11", version="11.0.0")
+    app = FastAPI(title=f"Sovereign Lite v{VERSION.split('.')[0]}", version=VERSION)
 
     db.init_db(default_universe())
 
@@ -161,6 +163,7 @@ def create_app() -> FastAPI:
                 "universe_tiers": db.universe_tiers(),
                 "scored": len(scores),
                 "portfolio_risk": portfolio_risk,
+                "failed_symbols": db.load_failed_symbols(limit=6),
                 "last_scan_at": last_scan.get("updated_at") if last_scan else None,
                 "last_scan_regime": last_scan.get("regime") if last_scan else None,
             }
@@ -304,12 +307,27 @@ def create_app() -> FastAPI:
 
     @app.post("/api/scan")
     def scan(force: bool = False, tier: str = "core"):
+        global _last_scan_ts
         if not _scan_lock.acquire(blocking=False):
             return {"status": "running", "message": "A scan is already in progress."}
         try:
-            return _json_safe(run_scan(force_fundamentals=force, tier=tier))
+            if not force and time.time() - _last_scan_ts < SCAN_COOLDOWN_SECONDS:
+                wait = int(SCAN_COOLDOWN_SECONDS - (time.time() - _last_scan_ts))
+                return {
+                    "status": "cooldown",
+                    "message": f"Scan cooldown active — retry in {wait}s (or force).",
+                    "retry_after_s": wait,
+                }
+            result = _json_safe(run_scan(force_fundamentals=force, tier=tier))
+            _last_scan_ts = time.time()
+            return result
         finally:
             _scan_lock.release()
+
+    @app.get("/api/failed-symbols")
+    def failed_symbols(limit: int = 50):
+        """Recent yFinance fetch failures — the Data Quality card's companion."""
+        return _json_safe(db.load_failed_symbols(limit=max(1, min(limit, 200))))
 
     # ── Backtest ─────────────────────────────────────────────────────────────
 

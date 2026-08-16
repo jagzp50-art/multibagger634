@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — SQLite data layer (exactly 5 tables).
+Sovereign Lite v12 — SQLite data layer (exactly 5 tables).
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol
@@ -103,9 +103,18 @@ CREATE TABLE IF NOT EXISTS scores (
     reinvestment_score REAL,
     vol          REAL,
     max_dd       REAL,
+    liquidity    REAL,
+    rs_consistency REAL,
     data_confidence REAL,
     factor_contributions TEXT,
     updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS failed_symbols (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol  TEXT NOT NULL,
+    source  TEXT NOT NULL,
+    error   TEXT,
+    ts      TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS backtests (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +250,10 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=5, check_same_thread=False)
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA journal_mode=WAL")
+    # WAL + NORMAL: concurrent readers never block writers and commits don't
+    # fsync twice per txn — the biggest single SQLite contention fix. WAL is
+    # durable enough for this app (a crash loses at most the last txn).
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -311,6 +324,8 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "reinvestment_score",
                 "vol",
                 "max_dd",
+                "liquidity",
+                "rs_consistency",
             ],
         )
         _migrate_columns(
@@ -552,9 +567,10 @@ def upsert_scores(records: Iterable[dict]) -> None:
              mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_1m, rs_3m,
              rs_6m, rs_12m, rs_boost, accumulation, pos_score, opp_score, sector_boost,
              trend_ok, institutional_quality, revision_score, compounder_score,
-             reinvestment_score, vol, max_dd, data_confidence, factor_contributions, updated_at)
+             reinvestment_score, vol, max_dd, liquidity, rs_consistency,
+             data_confidence, factor_contributions, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -587,6 +603,8 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     _num(r.get("reinvestment_score")),
                     _num(r.get("vol")),
                     _num(r.get("max_dd")),
+                    _num(r.get("liquidity")),
+                    _num(r.get("rs_consistency")),
                     _num(r.get("data_confidence")),
                     json.dumps(r.get("factor_contributions") or {}),
                     datetime.now().isoformat(timespec="seconds"),
@@ -1178,6 +1196,36 @@ def fundamentals_history_for(symbol: str, limit: int = 20) -> list[dict]:
             (symbol, limit),
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
+def record_failed_symbol(symbol: str, source: str, error: str = "") -> None:
+    """Persist a per-symbol fetch failure (yFinance can fail whole chunks or
+    individual names). Kept small — callers prune old rows occasionally."""
+    try:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO failed_symbols (symbol, source, error, ts) VALUES (?, ?, ?, ?)",
+                (symbol, source, str(error)[:300], datetime.now().isoformat(timespec="seconds")),
+            )
+            conn.execute("DELETE FROM failed_symbols WHERE id NOT IN (SELECT id FROM failed_symbols ORDER BY id DESC LIMIT 500)")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass  # failure tracking must never break a scan
+
+
+def load_failed_symbols(limit: int = 50) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, source, error, ts FROM failed_symbols ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

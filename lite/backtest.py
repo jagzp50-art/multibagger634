@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — one-click backtest (Phase 5).
+Sovereign Lite v12 — one-click backtest (Phase 5).
 
 A clean, lookahead-free momentum strategy over the stored price history:
 
@@ -27,21 +27,30 @@ DEFAULT_PARAMS = {
     "initial_capital": 1_000_000,  # ₹10L
     "trailing_stop_pct": 0.20,
     "cost_pct": 0.25,  # per-side transaction cost floor (%)
+    # Reserved for future fundamental-based strategies: annual/quarterly
+    # results are published with a ~45-day lag, so any signal built on ROE /
+    # EPS / quarterly figures must be shifted by this many days to avoid
+    # lookahead bias. The current strategy is price-only (momentum + trend
+    # template), so no lag is applied today — this documents the rule.
+    "reporting_lag_days": 45,
 }
 
 
 def _cost_breakdown(total_pct: float) -> dict:
     """Indian-market cost stack for one side of a trade (delivery):
 
-      STT 0.10% + brokerage 0.03% + GST 18% on brokerage + SEBI fee,
-      plus slippage; the total is floored at the configured `cost_pct`.
-      Without this, backtest CAGR is overstated.
+      STT 0.10% + brokerage 0.03% + GST 18% on brokerage + stamp duty
+      0.015% + NSE exchange charge 0.00297% + SEBI fee, plus slippage;
+      the total is floored at the configured `cost_pct`. Without this,
+      backtest CAGR is overstated.
     """
     stt = 0.10
     sebi = 0.0001
     brokerage = 0.03
     gst = round(brokerage * 0.18, 4)
-    base = stt + brokerage + gst + sebi
+    stamp = 0.015       # state stamp duty on delivery (buy side)
+    exchange = 0.00297  # NSE equity delivery transaction charge
+    base = stt + brokerage + gst + sebi + stamp + exchange
     total = max(float(total_pct), base)
     slippage = max(0.0, round(total - base, 4))
     return {
@@ -50,6 +59,8 @@ def _cost_breakdown(total_pct: float) -> dict:
         "stt_pct": stt,
         "gst_pct": gst,
         "sebi_pct": sebi,
+        "stamp_duty_pct": stamp,
+        "exchange_pct": exchange,
         "total_per_side_pct": round(total, 4),
     }
 

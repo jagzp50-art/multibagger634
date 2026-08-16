@@ -317,11 +317,13 @@ def test_trend_score_rewards_acceleration():
 # ── Data confidence + institutional quality (Phases 1-2) ────────────────────
 
 def test_confidence_factor_penalizes_partial_data():
+    # v12: convex curve (coverage/100)**1.5 — 0% coverage → 0, not 50%.
     assert scoring.confidence_factor(100) == pytest.approx(1.0)
-    assert scoring.confidence_factor(50) == pytest.approx(0.75)
-    assert scoring.confidence_factor(0) == pytest.approx(0.5)
+    assert scoring.confidence_factor(80) == pytest.approx(0.7155, abs=0.01)
+    assert scoring.confidence_factor(50) == pytest.approx(0.3536, abs=0.01)
+    assert scoring.confidence_factor(0) == pytest.approx(0.0)
     assert scoring.confidence_factor(None) == 1.0
-    assert scoring.apply_confidence(80.0, 50) == pytest.approx(60.0)
+    assert scoring.apply_confidence(80.0, 50) == pytest.approx(28.3, abs=0.5)
     assert scoring.apply_confidence(80.0, None) == pytest.approx(80.0)
 
 
@@ -658,6 +660,8 @@ def test_cost_breakdown_components_and_floor():
     assert low["brokerage_pct"] == 0.03
     assert low["gst_pct"] == pytest.approx(0.0054, abs=0.001)
     assert low["sebi_pct"] == pytest.approx(0.0001, abs=0.0001)
+    assert low["stamp_duty_pct"] == 0.015  # v12: delivery stamp duty
+    assert low["exchange_pct"] == pytest.approx(0.00297, abs=0.0001)  # v12: NSE charge
     assert low["total_per_side_pct"] == 0.25  # floored at the configured cost
 
     high = backtest._cost_breakdown(0.6)
@@ -1009,3 +1013,89 @@ def test_discovery_score_ranks_accelerating_names():
     assert discovery.rs_acceleration(accel) == pytest.approx(32.0)
     assert discovery.rs_acceleration(decel) == pytest.approx(-32.0)
     assert discovery.discovery_score({"rs_rank": None}) is None
+
+
+# ── v12: Reliability (WAL · failed symbols · confidence) + liquidity / RS stability ──
+
+def test_v12_confidence_curve_matches_spec():
+    # The review spec: 0%→0, 50%→35, 80%→72, 100%→100 (convex, not linear).
+    assert scoring.confidence_factor(0) == 0.0
+    assert scoring.confidence_factor(50) == pytest.approx(0.35, abs=0.01)
+    assert scoring.confidence_factor(80) == pytest.approx(0.72, abs=0.01)
+    assert scoring.confidence_factor(100) == 1.0
+
+
+def test_failed_symbols_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "fs.db"))
+    db_mod.init_db()
+    db_mod.record_failed_symbol("GONE.NS", "prices", "chunk: HTTP 500")
+    db_mod.record_failed_symbol("GONE.NS", "fundamentals", "no info")
+    db_mod.record_failed_symbol("OK.NS", "prices", "empty response")
+    rows = db_mod.load_failed_symbols()
+    assert len(rows) == 3
+    assert rows[0]["symbol"] == "OK.NS"  # newest first
+    assert {r["source"] for r in rows if r["symbol"] == "GONE.NS"} == {"prices", "fundamentals"}
+    assert all(r["ts"] for r in rows)
+
+
+def test_liquidity_factor_penalizes_microcaps():
+    from lite import indicators
+
+    assert indicators.liquidity_factor(1e5) == pytest.approx(0.2)      # ₹1L/day
+    assert indicators.liquidity_factor(1e7) == pytest.approx(0.733, abs=0.01)  # ₹10Cr/day
+    assert indicators.liquidity_factor(1e8) == pytest.approx(1.0)      # ₹100Cr+/day
+    assert indicators.liquidity_factor(None) is None
+    assert indicators.liquidity_factor(0) is None
+
+
+def test_kelly_lite_penalizes_illiquid_names():
+    from lite import portfolio
+
+    base = {"pos_score": 90.0, "quality": 90.0, "vol": 0.30, "max_dd": -0.15, "liquidity": 1.0}
+    thin = dict(base, liquidity=0.3)  # ₹2Cr/day — tradeable but thin
+    assert portfolio._kelly_lite(base) > portfolio._kelly_lite(thin) * 2
+    # No liquidity stored → no penalty (backwards compatible with old rows)
+    assert portfolio._kelly_lite({k: v for k, v in base.items() if k != "liquidity"}) == pytest.approx(portfolio._kelly_lite(base))
+
+
+def test_rs_consistency_blend_punishes_erratic_profiles():
+    import pandas as pd
+
+    idx = pd.date_range("2024-01-01", periods=400, freq="B")
+    def frame(growth):
+        vals = []
+        px = 100.0
+        for i in range(400):
+            px *= 1 + growth / 400.0
+            vals.append(px)
+        s = pd.Series(vals, index=idx)
+        return pd.DataFrame({"close": s, "high": s * 1.01, "low": s * 0.99, "volume": pd.Series([1_000_000] * 400, index=idx)})
+    prices = {"A.NS": frame(0.4), "B.NS": frame(-0.1)}
+    scoring.attach_indicators(prices)
+    fundas = [
+        {"symbol": "A.NS", "roe": 20, "roce": 25, "debt_equity": 0.3, "sales_growth": 15, "profit_growth": 15, "pe": 20, "pb": 3, "fcf_margin": 8, "sector": "Tech"},
+        {"symbol": "B.NS", "roe": 20, "roce": 25, "debt_equity": 0.3, "sales_growth": 15, "profit_growth": 15, "pe": 20, "pb": 3, "fcf_margin": 8, "sector": "Tech"},
+    ]
+    regime = {"regime": "BULL", "weights": {"quality": 0.25, "growth": 0.30, "momentum": 0.35, "valuation": 0.05, "risk": 0.05}}
+    recs = {r["symbol"]: r for r in scoring.compute_scores(regime, fundas, prices)}
+    assert recs["A.NS"]["rs_consistency"] is not None
+    # Steady riser has a stable RS profile vs the flat one (both rank within a 2-name universe)
+    assert recs["A.NS"]["rs_consistency"] >= recs["B.NS"]["rs_consistency"]
+
+
+def test_discovery_weights_are_orthogonal():
+    from lite import discovery
+
+    # Momentum is trend, same family as RS rank — dropping it from the composite
+    # means two names differing ONLY in momentum must score identically.
+    base = {"rs_rank": 70, "rs_1m": 80, "rs_3m": 70, "revision_score": 60, "margin_expansion": 2.0, "market_cap": 5000, "data_confidence": 100}
+    a = discovery.discovery_score(dict(base, momentum=95))
+    b = discovery.discovery_score(dict(base, momentum=10))
+    assert a == b
+    # ...while margin expansion and size now shift the rank.
+    bigger_margin = discovery.discovery_score(dict(base, margin_expansion=8.0))
+    tiny = discovery.discovery_score(dict(base, market_cap=20))  # ₹20Cr — illiquid microcap
+    assert bigger_margin > a
+    assert tiny < a

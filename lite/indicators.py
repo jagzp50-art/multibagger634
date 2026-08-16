@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — lightweight technical indicators (pandas only).
+Sovereign Lite v12 — lightweight technical indicators (pandas only).
 
 Implements exactly what the scoring/regime layers need:
   SMA, Wilder's ADX, RSI, realized volatility, max drawdown,
@@ -132,6 +132,34 @@ def price_position(close: pd.Series, window: int = 252) -> dict:
         "dist_52w_high": dist_high,
         "position_52w": pos,
     }
+
+
+def avg_traded_value(close: pd.Series, volume: pd.Series, n: int = 20) -> Optional[float]:
+    """Average daily traded value in ₹ over the trailing `n` sessions
+    (close × volume). This is the liquidity proxy for Kelly sizing —
+    microcaps with tiny traded value get penalized even if their score is 95."""
+    if len(close) < 2 or len(volume) < 2:
+        return None
+    c = close.tail(n)
+    v = volume.tail(n)
+    traded = (c * v).dropna()
+    if len(traded) < 5:
+        return None
+    return float(traded.mean())
+
+
+def liquidity_factor(avg_traded_value: Optional[float]) -> Optional[float]:
+    """Map avg daily traded value (₹) onto a 0.2–1.0 factor on a log scale.
+
+    ₹1L/day → 0.20 (untradeable), ₹10Cr/day → ~0.73, ₹100Cr+/day → 1.0.
+    A name scoring 95 with ₹50L of daily traded value can no longer be
+    oversized in the book.
+    """
+    if avg_traded_value is None or avg_traded_value <= 0:
+        return None
+    log_v = math.log10(avg_traded_value)
+    # log10(1e5)=5 → 0.20 · log10(1e8)=8 → 1.0, linear in log-space
+    return round(max(0.2, min(1.0, 0.2 + 0.8 * (log_v - 5.0) / 3.0)), 3)
 
 
 def trend_template(close: pd.Series) -> dict:

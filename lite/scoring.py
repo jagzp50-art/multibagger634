@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — scoring engine (Phase 2).
+Sovereign Lite v12 — scoring engine (Phase 2).
 
 Every raw metric is sigmoid-normalized to 0-100 (no binary cliff thresholds).
 
@@ -57,12 +57,13 @@ def _weighted(parts: list[tuple[Optional[float], float]]) -> Optional[float]:
 
 
 def confidence_factor(confidence: Optional[float]) -> float:
-    """Multiplier that punishes incomplete data: 100% coverage → 1.0,
-    50% coverage → 0.75. Garbage data can no longer rank as highly."""
+    """Multiplier that punishes incomplete data, convex in coverage:
+    confidence = (coverage/100) ** 1.5. A stock with zero fundamentals scores
+    0 (not 50%), 50% coverage → 0.35, 80% → 0.72, 100% → 1.0."""
     if confidence is None:
         return 1.0
-    c = max(0.0, min(100.0, float(confidence)))
-    return 0.5 + 0.5 * c / 100.0
+    c = max(0.0, min(100.0, float(confidence))) / 100.0
+    return round(c ** 1.5, 4)
 
 
 def apply_confidence(score: Optional[float], confidence: Optional[float]) -> Optional[float]:
@@ -279,6 +280,8 @@ def compute_price_metrics(close: pd.Series, high: pd.Series, low: pd.Series, vol
         "volume_ratio": indicators.volume_ratio(volume),
         "vol": indicators.annualized_vol(close),
         "max_dd": indicators.max_drawdown(close),
+        "avg_traded_value": indicators.avg_traded_value(close, volume),
+        "liquidity": indicators.liquidity_factor(indicators.avg_traded_value(close, volume)),
         "rsi": indicators.rsi(close),
         "adx": indicators.adx(high, low, close),
         "dist_52w_high": pos["dist_52w_high"],
@@ -359,6 +362,16 @@ def compute_scores(
             if rs_h is not None:
                 rs_parts.append((rs_h, w))
         rs_rank = _weighted(rs_parts)
+        # RS stability: a flat, consistent relative-strength profile (90/91/92/93)
+        # beats an erratic one (20/10/99/15) even at the same blended rank.
+        # Consistency = 100 − 2·σ of the four horizon percentiles; blended 15%
+        # into the RS rank when ≥3 horizons are present.
+        cons = [v for _, v in rs_parts if v is not None]
+        if len(cons) >= 3:
+            mean = sum(cons) / len(cons)
+            var = sum((v - mean) ** 2 for v in cons) / len(cons)
+            row["rs_consistency"] = round(max(0.0, min(100.0, 100.0 - 2.0 * math.sqrt(var))), 1)
+            rs_rank = _weighted([(rs_rank, 0.85), (row["rs_consistency"], 0.15)])
         row["rs_rank_score"] = rs_rank
         parts = score_symbol(symbol, f, row, benchmark_ret6)
 
@@ -407,6 +420,10 @@ def compute_scores(
         parts["factor_contributions"] = contrib
         parts["vol"] = row.get("vol")
         parts["max_dd"] = row.get("max_dd")
+        parts["liquidity"] = row.get("liquidity")
+        parts["rs_consistency"] = row.get("rs_consistency")
+        parts["margin_expansion"] = f.get("margin_expansion")
+        parts["market_cap"] = f.get("market_cap")
         records.append(parts)
     return records
 

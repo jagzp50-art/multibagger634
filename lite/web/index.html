@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v11</title>
+<title>Sovereign Lite v12</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -176,7 +176,7 @@ function Nav({tab,setTab,regime}){
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v11 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v12 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -214,6 +214,48 @@ function Dashboard(){
   return (
     <div className="wrap anim">
       <div><div className="screen-title">Market Dashboard</div><div className="screen-sub">Regime · Allocation · Top Picks</div></div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
+        <div className="card" style={{padding:'12px 14px'}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>MARKET REGIME</div>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
+            <span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span>
+            <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--t2)'}}>{regime.vix != null ? 'VIX '+Number(regime.vix).toFixed(1) : ''}</span>
+          </div>
+          <div className="note" style={{marginTop:6}}>{regime.reason}</div>
+        </div>
+        <div className="card" style={{padding:'12px 14px'}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>MARKET HEALTH</div>
+          <div className="stat" style={{marginTop:6}}>
+            <span className={`stat-val ${data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60?'acid':data.breadth.market_health>=45?'gold':'rose') : 't2'}`} style={{fontSize:26}}>{data.breadth && data.breadth.market_health!=null ? data.breadth.market_health : '—'}</span>
+            <span className="stat-key">/100 breadth blend</span>
+          </div>
+          <div className="note" style={{marginTop:4}}>{data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60?'Broad participation':data.breadth.market_health>=45?'Mixed tape':'Weak tape') : 'Run a scan'}</div>
+        </div>
+        <div className="card" style={{padding:'12px 14px'}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>TOP SECTOR</div>
+          <div style={{fontSize:16,fontWeight:700,color:'var(--t0)',marginTop:6}}>{sectors && sectors.length ? sectors[0].sector : '—'}</div>
+          <div className="note" style={{marginTop:4}}>{sectors && sectors.length ? `#${sectors[0].rank} · strength ${fmt(sectors[0].strength,0)} · ${sectors[0].count} stocks` : 'Run a scan'}</div>
+        </div>
+        <div className="card" style={{padding:'12px 14px'}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>CASH ALLOCATION</div>
+          <div className="stat" style={{marginTop:6}}>
+            <span className={`stat-val ${allocation && allocation.equity>=70?'acid':allocation && allocation.equity>=45?'gold':'rose'}`} style={{fontSize:26}}>{allocation ? allocation.equity : '—'}<span style={{fontSize:13}}>%</span></span>
+            <span className="stat-key">suggested equity</span>
+          </div>
+          <div className="note" style={{marginTop:4}}>{allocation && allocation.equity>=70?'Risk-on regime':allocation && allocation.equity>=45?'Balanced stance':'Defensive stance'}</div>
+        </div>
+      </div>
+
+      {data.failed_symbols && data.failed_symbols.length > 0 && (
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:14,background:'rgba(255,110,97,0.07)',border:'1px solid rgba(255,110,97,0.35)',borderRadius:10,padding:'8px 12px'}}>
+          <span style={{fontSize:11,fontWeight:700,color:'var(--rose)'}}>⚠ {data.failed_symbols.length}+ fetch failures this scan</span>
+          {data.failed_symbols.slice(0,6).map(f=>(
+            <span key={f.symbol+f.ts} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)'}}>{f.symbol}<span style={{color:'var(--t3)'}}>·{f.source}</span></span>
+          ))}
+          <span className="note" style={{marginLeft:'auto'}}>Tracked per symbol — never silently dropped</span>
+        </div>
+      )}
 
       <div className="grid2">
         <div className="card">

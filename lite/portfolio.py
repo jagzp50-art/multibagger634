@@ -1,5 +1,5 @@
 """
-Sovereign Lite v10 — portfolio construction layer.
+Sovereign Lite v12 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
 (higher = better). Allocation weights are conviction-based: the #1 position
@@ -44,10 +44,14 @@ def attach_position_scores(records: list[dict]) -> list[dict]:
 
 
 def _kelly_lite(r: dict) -> float:
-    """Kelly-Lite 2.0: score · quality · (1/volatility) · drawdown penalty.
+    """Kelly-Lite 2.1: score · quality · (1/volatility) · drawdown penalty ·
+    liquidity factor.
 
     Low volatility alone isn't enough — a stock with low vol but catastrophic
-    drawdowns gets penalized via its max drawdown (a −50% DD halves it).
+    drawdowns gets penalized via its max drawdown (a −50% DD halves it). And
+    a 95-scoring microcap with no daily traded value can't be oversized:
+    the liquidity factor (avg traded value, log-scaled 0.2–1.0) is now part
+    of the sizing. Names without a stored liquidity default to no penalty.
     """
     pos = r.get("pos_score") or 0.0
     q = (r.get("quality") or 50.0) / 100.0
@@ -60,7 +64,9 @@ def _kelly_lite(r: dict) -> float:
     if mdd is not None:
         depth = min(1.0, max(0.0, -float(mdd)))  # 0..1 drawdown depth
         dd_factor = max(0.05, min(1.0, 1.0 - depth / 0.5))
-    return max(0.0, pos * q * vol_factor * dd_factor)
+    liq = r.get("liquidity")
+    liq_factor = float(liq) if liq is not None and float(liq) > 0 else 1.0
+    return max(0.0, pos * q * vol_factor * dd_factor * liq_factor)
 
 
 def _enforce_sector_caps(alloc: list[dict], cap_pct: float) -> list[dict]:

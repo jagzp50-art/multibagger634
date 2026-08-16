@@ -1,5 +1,5 @@
 """
-Sovereign Lite v7 — yFinance-only data layer.
+Sovereign Lite v12 — yFinance-only data layer.
 
   - Price history: batched `yf.download` (one request per symbol, threaded by yf)
   - Fundamentals: per-symbol `Ticker.info` + quarterly income statement,
@@ -51,11 +51,21 @@ def fetch_prices(symbols: list[str], period: str = HISTORY_PERIOD) -> dict[str, 
             )
         except Exception as exc:  # pragma: no cover - network
             print(f"  ⚠️ download chunk failed ({len(chunk)} symbols): {exc}")
+            # Never let a whole chunk vanish silently — record every name so
+            # the Data Quality card can show exactly who failed and why.
+            for sym in chunk:
+                db.record_failed_symbol(sym, "prices", f"chunk: {exc}")
             continue
         if df is None or df.empty:
+            for sym in chunk:
+                db.record_failed_symbol(sym, "prices", "empty response")
             continue
         if len(chunk) == 1 and not isinstance(df.columns, pd.MultiIndex):
-            result[chunk[0]] = df[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
+            sub = df[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
+            if sub.empty:
+                db.record_failed_symbol(chunk[0], "prices", "no rows")
+            else:
+                result[chunk[0]] = sub
         else:
             for sym in chunk:
                 if sym in df.columns.get_level_values(0):
@@ -63,8 +73,12 @@ def fetch_prices(symbols: list[str], period: str = HISTORY_PERIOD) -> dict[str, 
                         sub = df[sym][["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
                         if not sub.empty:
                             result[sym] = sub
+                        else:
+                            db.record_failed_symbol(sym, "prices", "no rows")
                     except KeyError:
-                        continue
+                        db.record_failed_symbol(sym, "prices", "missing from response")
+                else:
+                    db.record_failed_symbol(sym, "prices", "missing from response")
     return result
 
 
@@ -587,6 +601,7 @@ def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dic
             return sym, metrics
         except Exception as exc:
             print(f"  ⚠️ fundamentals failed for {sym}: {exc}")
+            db.record_failed_symbol(sym, "fundamentals", str(exc))
             return sym, {}
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
