@@ -39,12 +39,33 @@ def attach_position_scores(records: list[dict]) -> list[dict]:
     return records
 
 
-def build_allocation(records: list[dict], equity_pct: float, top_n: int = 8) -> list[dict]:
+def _kelly_lite(r: dict) -> float:
+    """Kelly-Lite conviction: score · quality · (1/volatility), normalized.
+
+    High quality + low volatility + strong RS deserve more capital than an
+    equally-scored but volatile, low-quality name.
+    """
+    pos = r.get("pos_score") or 0.0
+    q = (r.get("quality") or 50.0) / 100.0
+    vol = r.get("vol")
+    if vol is None or vol <= 0:
+        vol = 0.30
+    vol_factor = 0.15 / (0.15 + vol)
+    return max(0.0, pos * q * vol_factor)
+
+
+def build_allocation(
+    records: list[dict],
+    equity_pct: float,
+    top_n: int = 8,
+    mode: str = "kelly",
+) -> list[dict]:
     """Conviction-weighted allocation over the top-N by position score.
 
-    weight_i ∝ pos_score², normalized so the book sums to equity_pct. Squaring
-    concentrates capital in the highest-conviction names (92 → 89 → 88 → 76
-    becomes ~18% → 17% → 16% → 12%, not a flat linear taper).
+    mode="kelly" (default): weight ∝ pos_score · quality · 1/vol — high
+    quality, low volatility, strong RS get the largest slices.
+    mode="conviction": weight ∝ pos_score² — pure score tapering.
+    Both normalize so the book sums to equity_pct.
     """
     ranked = sorted(
         [r for r in records if r.get("pos_score") is not None],
@@ -52,11 +73,14 @@ def build_allocation(records: list[dict], equity_pct: float, top_n: int = 8) -> 
         reverse=True,
     )[: max(1, min(int(top_n), 25))]
 
-    squares = [(r.get("pos_score") or 0.0) ** 2 for r in ranked]
-    total = sum(squares)
+    if mode == "conviction":
+        scores = [(r.get("pos_score") or 0.0) ** 2 for r in ranked]
+    else:
+        scores = [_kelly_lite(r) for r in ranked]
+    total = sum(scores)
     out = []
-    for r, sq in zip(ranked, squares):
-        w = (sq / total * equity_pct) if total > 0 else equity_pct / len(ranked)
+    for r, s in zip(ranked, scores):
+        w = (s / total * equity_pct) if total > 0 else equity_pct / len(ranked)
         out.append(
             {
                 "symbol": r.get("symbol"),
@@ -65,6 +89,7 @@ def build_allocation(records: list[dict], equity_pct: float, top_n: int = 8) -> 
                 "pos_score": r.get("pos_score"),
                 "mb_bucket": r.get("mb_bucket"),
                 "weight_pct": round(w, 2),
+                "mode": mode,
             }
         )
     return out

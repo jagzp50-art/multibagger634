@@ -19,8 +19,9 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from . import alpha
 from . import backtest as bt
-from . import data, db, indicators, portfolio, regime as regime_mod, rotation, scoring
+from . import breadth, data, db, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .pipeline import run_scan
 from .universe import default_universe
 
@@ -30,7 +31,32 @@ _regime_cache: dict = {"payload": None, "fetched_at": 0.0}
 _regime_lock = threading.Lock()
 REGIME_TTL_SECONDS = 15 * 60
 
+_breadth_cache: dict = {"payload": None, "fetched_at": 0.0}
+_breadth_lock = threading.Lock()
+BREADTH_TTL_SECONDS = 5 * 60
+
 _scan_lock = threading.Lock()
+
+
+def _fresh_breadth() -> dict:
+    with _breadth_lock:
+        if _breadth_cache["payload"] and time.time() - _breadth_cache["fetched_at"] < BREADTH_TTL_SECONDS:
+            return _breadth_cache["payload"]
+        frames = {}
+        for sym in db.universe_symbols():
+            rows = db.load_prices(sym)
+            if rows:
+                frames[sym] = indicators.to_dataframe(rows)
+        _breadth_cache["payload"] = _json_safe(breadth.compute_breadth(frames))
+        _breadth_cache["fetched_at"] = time.time()
+        return _breadth_cache["payload"]
+
+
+def _recent_watchlist(limit: int = 10) -> list[dict]:
+    latest = db.latest_watchlist_scan()
+    if not latest:
+        return []
+    return _json_safe(db.load_watchlist_events(latest, limit=limit))
 
 
 def create_app() -> FastAPI:
@@ -112,10 +138,16 @@ def create_app() -> FastAPI:
                 }
             )
         last_scan = db.latest_scan_regime()
+        try:
+            watch_events = _recent_watchlist(limit=8)
+        except Exception:
+            watch_events = []
         return _json_safe(
             {
                 "regime": regime,
                 "allocation": regime.get("allocation"),
+                "breadth": _fresh_breadth(),
+                "watchlist": watch_events,
                 "top_picks": picks,
                 "universe_size": len(db.universe_symbols()),
                 "scored": len(scores),
@@ -196,6 +228,28 @@ def create_app() -> FastAPI:
 
     # ── Sector rotation + portfolio construction ─────────────────────────────
 
+    @app.get("/api/breadth")
+    def breadth_endpoint():
+        """Universe-wide % above 20/50/200-DMA + market health."""
+        return _fresh_breadth()
+
+    @app.get("/api/watchlist")
+    def watchlist_endpoint():
+        """Today's idea generator: RS leaders / score surges / MB elite / top sectors."""
+        latest = db.latest_watchlist_scan()
+        events = db.load_watchlist_events(latest) if latest else []
+        return _json_safe({"scan_date": latest, "events": events})
+
+    @app.get("/api/alpha")
+    def alpha_endpoint():
+        """Alpha decay (forward returns by horizon) + factor IC summary."""
+        return _json_safe({"decay": db.load_alpha_rows(), "ic": alpha.ic_summary()})
+
+    @app.get("/api/factor-ic")
+    def factor_ic_endpoint():
+        """Which factor predicts forward returns, overall and per regime."""
+        return _json_safe(alpha.ic_summary())
+
     @app.get("/api/sectors")
     def sectors():
         scores = db.load_scores()
@@ -205,18 +259,19 @@ def create_app() -> FastAPI:
         return _json_safe(out)
 
     @app.get("/api/portfolio")
-    def portfolio_endpoint(top_n: int = 8):
+    def portfolio_endpoint(top_n: int = 8, mode: str = "kelly"):
         regime = _fresh_regime()
         scores = db.load_scores()
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
         rows = _merge(scores, fundas)
         equity_pct = float(regime.get("allocation", {}).get("equity", 60))
-        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n)
+        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n, mode=mode)
         return _json_safe(
             {
                 "regime": regime.get("regime"),
                 "equity_pct": equity_pct,
                 "allocation": alloc,
+                "mode": mode,
             }
         )
 

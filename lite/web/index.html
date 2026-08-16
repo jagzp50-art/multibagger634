@@ -239,6 +239,36 @@ function Dashboard(){
         </div>
       </div>
 
+      <div className="grid2">
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Market Breadth</span><span className="note">{data.breadth && data.breadth.n ? data.breadth.n + ' stocks' : ''}</span></div>
+          {!data.breadth || !data.breadth.n ? <div className="note">Run a scan to compute breadth.</div> : (
+            <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+              <div className="stat"><span className={`stat-val ${data.breadth.above_200>=50?'acid':data.breadth.above_200>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_200}%</span><span className="stat-key">Above 200-DMA</span></div>
+              <div className="stat"><span className={`stat-val ${data.breadth.above_50>=50?'acid':data.breadth.above_50>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_50}%</span><span className="stat-key">Above 50-DMA</span></div>
+              <div className="stat"><span className={`stat-val ${data.breadth.above_20>=50?'acid':data.breadth.above_20>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_20}%</span><span className="stat-key">Above 20-DMA</span></div>
+              <div className="stat"><span className={`stat-val ${data.breadth.market_health>=60?'acid':data.breadth.market_health>=45?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.market_health}</span><span className="stat-key">Market Health</span></div>
+            </div>
+          )}
+          <div className="note" style={{marginTop:12}}>{data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60 ? 'Broad participation — confirms an index-level bull.' : data.breadth.market_health>=45 ? 'Mixed tape — index strength not confirmed by breadth.' : 'Weak breadth — the index is being led by a few names.') : ''}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Today's Ideas</span><span className="note">watchlist intelligence</span></div>
+          {!data.watchlist || data.watchlist.length === 0 ? <div className="note">No events yet — consecutive scans surface RS leaders, score surges, MB elites and top-ranked sectors.</div> : (
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {data.watchlist.map((e,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontFamily:'var(--mono)',fontSize:10}}>
+                  <span className={`badge badge-${e.event==='RS_LEADER'?'STRONG':e.event==='MB_ELITE'?'MULTIBAGGER':e.event==='SCORE_SURGE'?'EMERGING':'WATCHLIST'}`}>{e.event}</span>
+                  <span style={{color:'var(--t0)',fontWeight:600}}>{e.symbol.replace('.NS','')}</span>
+                  <span style={{color:'var(--t3)'}}>{e.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="card">
         <div className="card-hdr"><span className="card-title">Sector Rotation</span><span className="note">RS + earnings growth · boost applied to member stocks</span></div>
         {!sectors ? <Loader/> : sectors.length === 0 ? <div className="note">Run a scan to rank sectors.</div> : (
@@ -386,10 +416,37 @@ function Screener(){
 }
 
 /* ── ELITE PICKS + MB DETECTOR ───────────────────────────────────────── */
+function ContribRow({r}){
+  const fc = r.factor_contributions || {};
+  const keys = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['rs_boost','RS Boost'],['sector_boost','Sector']];
+  return (
+    <tr>
+      <td colSpan={12} style={{background:'var(--bg3)',padding:'10px 16px'}}>
+        <div style={{display:'flex',gap:16,flexWrap:'wrap',alignItems:'center'}}>
+          <span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)',textTransform:'uppercase',letterSpacing:1}}>Why {r.symbol.replace('.NS','')} scores {fmt(r.score,0)}</span>
+          {keys.map(([k,label])=>{
+            const v = fc[k];
+            if (v == null || isNaN(v)) return null;
+            const c = v >= 0 ? 'var(--acid)' : 'var(--rose)';
+            return (
+              <div key={k} style={{display:'flex',flexDirection:'column',gap:2,minWidth:72}}>
+                <span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)'}}>{label}</span>
+                <span style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:600,color:c}}>{v > 0 ? '+' : ''}{Number(v).toFixed(1)}</span>
+                <div style={{height:3,width:64,background:'var(--bg0)',borderRadius:2}}><div style={{height:'100%',width:Math.min(100,Math.abs(v))+'%',background:c,borderRadius:2}}/></div>
+              </div>
+            );
+          })}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function ElitePicks(){
   const [picks,setPicks] = useState(null);
   const [mbs,setMbs] = useState(null);
   const [err,setErr] = useState(null);
+  const [detail,setDetail] = useState(null);
   useEffect(()=>{
     j('/api/picks?limit=20').then(setPicks).catch(e=>setErr(e.message));
     j('/api/mb-candidates?limit=100').then(setMbs).catch(()=>{});
@@ -398,7 +455,7 @@ function ElitePicks(){
   if (!picks) return <Loader/>;
   return (
     <div className="wrap anim">
-      <div><div className="screen-title">Elite Picks</div><div className="screen-sub">Top 20 by institutional score</div></div>
+      <div><div className="screen-title">Elite Picks</div><div className="screen-sub">Top 20 by institutional score · click a row for factor attribution</div></div>
       <div className="card">
         {picks.length === 0 ? <Empty icon="📡" text="Run a scan first."/> : (
           <div className="tbl-wrap">
@@ -410,7 +467,8 @@ function ElitePicks(){
               </tr></thead>
               <tbody>
                 {picks.map(r=>(
-                  <tr key={r.symbol}>
+                  <React.Fragment key={r.symbol}>
+                  <tr style={{cursor:'pointer'}} onClick={()=>setDetail(d=>d===r.symbol?null:r.symbol)}>
                     <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
                     <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
                     <td><Bucket b={r.mb_bucket}/></td>
@@ -424,6 +482,8 @@ function ElitePicks(){
                     <td className="num">{fmt(r.risk,0)}</td>
                     <td className="num">{fmt(r.accumulation,0)}</td>
                   </tr>
+                  {detail===r.symbol && <ContribRow r={r}/>}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -529,7 +589,7 @@ function Portfolio(){
       <div><div className="screen-title">Portfolio</div><div className="screen-sub">Suggested allocation · holdings · P&L</div></div>
 
       <div className="card">
-        <div className="card-hdr"><span className="card-title">Suggested Allocation</span><span className="note">Position score: 40% Quality · 30% MB · 20% RS · 10% Risk</span></div>
+        <div className="card-hdr"><span className="card-title">Suggested Allocation</span><span className="note">Position score 40% Quality · 30% MB · 20% RS · 10% Risk · Kelly-Lite sizing (score × quality ÷ volatility)</span></div>
         {!alloc ? <Loader/> : alloc.allocation.length === 0 ? <div className="note">Run a scan first.</div> : (
           <div className="tbl-wrap">
             <table>
@@ -626,7 +686,8 @@ function Backtest(){
   const [running,setRunning] = useState(false);
   const [err,setErr] = useState(null);
 
-  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); },[]);
+  const [alphaData,setAlphaData] = useState(null);
+  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); j('/api/alpha').then(setAlphaData).catch(()=>{}); },[]);
 
   const run = async ()=>{
     setRunning(true); setErr(null); setResult(null);
@@ -678,25 +739,30 @@ function Backtest(){
             <div className="card"><div className="stat"><span className={`stat-val ${s.cagr_pct>=0?'acid':'rose'}`}>{pct(s.cagr_pct)}</span><span className="stat-key">CAGR</span></div></div>
             <div className="card"><div className="stat"><span className="stat-val rose">{Number(s.max_drawdown_pct).toFixed(1)}%</span><span className="stat-key">Max Drawdown</span></div></div>
             <div className="card"><div className="stat"><span className="stat-val gold">{Number(s.sharpe).toFixed(2)}</span><span className="stat-key">Sharpe</span></div></div>
+            <div className="card"><div className="stat"><span className={`stat-val ${s.sortino!=null && s.sortino>=0?'acid':'rose'}`}>{s.sortino!=null ? Number(s.sortino).toFixed(2) : '—'}</span><span className="stat-key">Sortino</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val">{s.turnover_annual!=null ? s.turnover_annual+'x' : '—'}</span><span className="stat-key">Turnover / Yr</span></div></div>
             <div className="card"><div className="stat"><span className="stat-val">{s.win_rate_pct != null ? s.win_rate_pct+'%' : '—'}</span><span className="stat-key">Win Rate</span></div></div>
             <div className="card"><div className="stat"><span className={`stat-val ${s.net_return_pct>=0?'acid':'rose'}`}>{pct(s.net_return_pct)}</span><span className="stat-key">Net Return</span></div></div>
             <div className="card"><div className="stat"><span className="stat-val">{fmtRs(s.final_value)}</span><span className="stat-key">Final Value</span></div></div>
             <div className="card"><div className="stat"><span className={`stat-val ${s.alpha_pct!=null && s.alpha_pct>=0?'acid':'rose'}`}>{s.alpha_pct!=null ? pct(s.alpha_pct) : '—'}</span><span className="stat-key">Alpha vs NIFTY 50</span></div></div>
             {s.benchmark_cagr_pct!=null && <div className="card"><div className="stat"><span className="stat-val gold">{pct(s.benchmark_cagr_pct)}</span><span className="stat-key">NIFTY CAGR</span></div></div>}
+            {s.universe_alpha_pct!=null && <div className="card"><div className="stat"><span className={`stat-val ${s.universe_alpha_pct>=0?'acid':'rose'}`}>{pct(s.universe_alpha_pct)}</span><span className="stat-key">Alpha vs Universe EW</span></div></div>}
+            {s.universe_cagr_pct!=null && <div className="card"><div className="stat"><span className="stat-val gold">{pct(s.universe_cagr_pct)}</span><span className="stat-key">Universe EW CAGR</span></div></div>}
           </div>
 
           <div className="card">
-            <div className="card-hdr"><span className="card-title">Equity Curve</span><span className="note">{s.benchmark ? 'solid = strategy · dashed = '+s.benchmark : ''}</span></div>
+            <div className="card-hdr"><span className="card-title">Equity Curve</span><span className="note">solid = strategy · dashed gold = NIFTY 50 · dashed sky = Universe EW</span></div>
             {result.equity_curve.length > 2 ? (
               <div style={{height:280}}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={(()=>{ const bm=(result.benchmark_curve||[]).reduce((m,p)=>{m[p.date]=p.value;return m;},{}); return result.equity_curve.map(p=>({...p, bench:bm[p.date]})); })()} margin={{top:8,right:8,bottom:0,left:8}}>
+                  <LineChart data={(()=>{ const bm=(result.benchmark_curve||[]).reduce((m,p)=>{m[p.date]=p.value;return m;},{}); const uv=(result.universe_curve||[]).reduce((m,p)=>{m[p.date]=p.value;return m;},{}); return result.equity_curve.map(p=>({...p, bench:bm[p.date], uni:uv[p.date]})); })()} margin={{top:8,right:8,bottom:0,left:8}}>
                     <XAxis dataKey="date" tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} minTickGap={40}/>
                     <YAxis domain={['auto','auto']} tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} width={70} tickFormatter={v=>v>=100000?'₹'+(v/100000).toFixed(0)+'L':'₹'+v}/>
                     <Tooltip contentStyle={{backgroundColor:'#0c1120',borderColor:'#161f30',borderRadius:8,fontSize:10,fontFamily:'Geist Mono'}}
-                      formatter={(v,name)=>({Equity:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Equity'],bench:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'NIFTY 50']}[name]||[v,name])}/>
+                      formatter={(v,name)=>({Equity:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Equity'],bench:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'NIFTY 50'],uni:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Universe EW']}[name]||[v,name])}/>
                     <Line type="monotone" dataKey="equity" stroke="#00ffa3" strokeWidth={1.8} dot={false}/>
                     <Line type="monotone" dataKey="bench" stroke="#ffb700" strokeWidth={1.2} strokeDasharray="4 3" dot={false}/>
+                    <Line type="monotone" dataKey="uni" stroke="#3d9eff" strokeWidth={1.2} strokeDasharray="2 3" dot={false}/>
                     <ReferenceDot x={result.equity_curve[0].date} y={s.initial_capital} r={2} fill="#ffb700"/>
                   </LineChart>
                 </ResponsiveContainer>
@@ -728,6 +794,44 @@ function Backtest(){
             )}
           </div>
         </>
+      )}
+
+      {alphaData && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Model Self-Measurement</span><span className="note">forward returns after signals · factor IC (which factor predicts?)</span></div>
+          {alphaData.decay && alphaData.decay.length > 0 ? (
+            <div className="grid3">
+              {alphaData.decay.map(d=>(
+                <div key={d.horizon_days} className="card">
+                  <div className="stat"><span className={`stat-val ${d.avg_return_pct>=0?'acid':'rose'}`}>{pct(d.avg_return_pct)}</span><span className="stat-key">{d.horizon_days}-day forward return · hit {fmt(d.hit_rate_pct,0)}% · n={d.n}</span></div>
+                </div>
+              ))}
+            </div>
+          ) : <div className="note">No measured signals yet — alpha decay fills in after scans and elapsed price history accumulate.</div>}
+          {alphaData.ic && Object.keys(alphaData.ic.factors||{}).length > 0 && (
+            <div className="tbl-wrap" style={{marginTop:12}}>
+              <table>
+                <thead><tr><th>Factor</th><th className="num">Avg IC</th><th className="num">Last IC</th><th className="num">Samples</th><th>Best Regime</th></tr></thead>
+                <tbody>
+                  {Object.entries(alphaData.ic.factors).sort((a,b)=>b[1].avg_ic-a[1].avg_ic).map(([f,info])=>{
+                    const regimes = alphaData.ic.regimes||{};
+                    let best = '—', bestIc = -2;
+                    Object.entries(regimes).forEach(([rg,fm])=>{ if(fm[f]!=null && fm[f]>bestIc){ bestIc=fm[f]; best=rg; } });
+                    return (
+                      <tr key={f}>
+                        <td style={{color:'var(--t0)',fontWeight:600}}>{f}</td>
+                        <td className={`num ${info.avg_ic>0?'up':'dn'}`}>{Number(info.avg_ic).toFixed(3)}</td>
+                        <td className={`num ${info.last_ic>0?'up':'dn'}`}>{Number(info.last_ic).toFixed(3)}</td>
+                        <td className="num">{info.n}</td>
+                        <td>{best!=='—' ? <span className={`badge badge-${best==='BULL'?'MULTIBAGGER':best==='BEAR'?'WATCHLIST':best==='HIGH_VOLATILITY'?'EMERGING':'STRONG'}`}>{best}</span> : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {wf && wf.summary && !wf.summary.error && (

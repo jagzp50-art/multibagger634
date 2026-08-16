@@ -408,6 +408,8 @@ def _financial_history(symbol: str) -> dict:
         "revenue_accel_annual": None,
         "earnings_vol": None,
         "sales_vol": None,
+        "cfo_pat_ratio": None,
+        "cfo_growth": None,
         "_rows": [],
     }
     try:
@@ -454,6 +456,7 @@ def _financial_history(symbol: str) -> dict:
                 "fcf": fcf_v,
                 "total_debt": db_,
                 "equity": eq,
+                "ocf": oc,
                 "roe": (ni_v / eq * 100) if (eq and eq > 0 and ni_v is not None) else None,
                 "roce": (eb / ce * 100) if (ce and ce > 0 and eb is not None) else None,
                 "net_margin": (ni_v / rv * 100) if (rv and rv > 0 and ni_v is not None) else None,
@@ -493,6 +496,15 @@ def _financial_history(symbol: str) -> dict:
             for i in range(1, len(rev_vals))
         ]
         out["revenue_accel_annual"] = _trend_score(annual_growths)
+        # Quality of earnings: CFO/PAT (cash conversion) + CFO growth (latest YoY).
+        # A company growing profits without cash is a red flag — this catches it.
+        ocf_vals = [r["ocf"] for r in rows]
+        ocf_latest = ocf_vals[-1] if ocf_vals else None
+        ni_latest = ni_vals[-1] if ni_vals else None
+        if ocf_latest is not None and ni_latest is not None and ni_latest != 0:
+            out["cfo_pat_ratio"] = ocf_latest / ni_latest
+        if len(ocf_vals) >= 2 and ocf_vals[-2] and ocf_vals[-2] > 0 and ocf_vals[-1] is not None:
+            out["cfo_growth"] = ocf_vals[-1] / ocf_vals[-2] - 1
         out["_rows"] = rows
         return out
     except Exception as exc:  # pragma: no cover - network

@@ -74,6 +74,8 @@ def run_backtest(
     curve: list[dict] = []
     trades: list[dict] = []
     daily_equity = []
+    buy_notional = 0.0
+    sell_notional = 0.0
 
     for i in range(1, len(closes)):
         day = closes.index[i]
@@ -91,12 +93,14 @@ def run_backtest(
             if pos["peak"] * (1 - stop) > px:
                 proceeds = pos["shares"] * px
                 cash += proceeds
+                sell_notional += proceeds
                 trades.append(_trade(pos, sym, day, px, "trailing_stop"))
                 del holdings[sym]
             # 50-DMA exit
             elif sma50.loc[day, sym] is not None and not pd.isna(sma50.loc[day, sym]) and px < sma50.loc[day, sym]:
                 proceeds = pos["shares"] * px
                 cash += proceeds
+                sell_notional += proceeds
                 trades.append(_trade(pos, sym, day, px, "sma50_break"))
                 del holdings[sym]
 
@@ -129,7 +133,9 @@ def run_backtest(
                 if sym not in picks:
                     px = closes.loc[day, sym]
                     if px is not None and not pd.isna(px):
-                        cash += holdings[sym]["shares"] * px
+                        proceeds = holdings[sym]["shares"] * px
+                        cash += proceeds
+                        sell_notional += proceeds
                         trades.append(_trade(holdings[sym], sym, day, px, "rebalance"))
                     del holdings[sym]
 
@@ -145,21 +151,54 @@ def run_backtest(
                         continue
                     cost = shares * px
                     cash -= cost
+                    buy_notional += cost
                     holdings[sym] = {"shares": shares, "entry": px, "peak": px, "entry_date": day.date().isoformat()}
 
     # Close remaining positions at the end
     for sym in list(holdings.keys()):
         px = closes.iloc[-1][sym]
         if px is not None and not pd.isna(px):
-            cash += holdings[sym]["shares"] * px
+            proceeds = holdings[sym]["shares"] * px
+            cash += proceeds
+            sell_notional += proceeds
             trades.append(_trade(holdings[sym], sym, closes.index[-1], px, "end"))
 
     final = cash
     equity_series = pd.Series([p["equity"] for p in curve])
-    summary = _summary(initial, final, equity_series, trades, len(rebalance_dates) - 1)
+    summary = _summary(initial, final, equity_series, trades, len(rebalance_dates) - 1, buy_notional, sell_notional)
+
+    # Universe equal-weight benchmark: the average member of the candidate pool.
+    # The model must beat its own universe, not just a stored index.
+    universe_curve: list[dict] = []
+    bench = aligned.mean(axis=1).dropna()
+    if len(bench) >= 60 and float(bench.iloc[0]) > 0:
+        norm = bench / float(bench.iloc[0]) * initial
+        by_date = {d.date().isoformat(): float(v) for d, v in zip(norm.index, norm)}
+        last_v = None
+        for pt in curve:
+            if pt["date"] in by_date:
+                last_v = by_date[pt["date"]]
+            if last_v is not None:
+                universe_curve.append({"date": pt["date"], "value": round(last_v, 2)})
+        b_ret = float(norm.iloc[-1] / norm.iloc[0] - 1)
+        b_years = max(len(norm) / 252, 1 / 252)
+        b_cagr = ((norm.iloc[-1] / norm.iloc[0]) ** (1 / b_years) - 1) * 100
+        b_mdd = float(((norm - norm.cummax()) / norm.cummax()).min() * 100)
+        strat_ret = final / initial - 1
+        summary.update(
+            {
+                "universe_benchmark": "Universe EW",
+                "universe_return_pct": round(b_ret * 100, 2),
+                "universe_cagr_pct": round(b_cagr, 2),
+                "universe_max_dd_pct": round(b_mdd, 2),
+                "universe_alpha_pct": round((strat_ret - b_ret) * 100, 2),
+            }
+        )
+
     return {
         "params": p,
         "equity_curve": curve,
+        "universe_curve": universe_curve,
         "trades": trades,
         "summary": summary,
         "warnings": [],
@@ -278,17 +317,31 @@ def _trade(pos: dict, symbol: str, day, price: float, reason: str) -> dict:
         "exit_price": round(price, 2),
         "entry_price": round(pos["entry"], 2),
         "return_pct": round((price / pos["entry"] - 1) * 100, 2),
+        "shares": pos.get("shares"),
         "reason": reason,
     }
 
 
-def _summary(initial: float, final: float, equity_series: pd.Series, trades: list, n_rebalances: int) -> dict:
+def _summary(
+    initial: float,
+    final: float,
+    equity_series: pd.Series,
+    trades: list,
+    n_rebalances: int,
+    buy_notional: float = 0.0,
+    sell_notional: float = 0.0,
+) -> dict:
     n_days = len(equity_series)
     years = max(n_days / 252, 1 / 252)
     cagr = ((final / initial) ** (1 / years) - 1) * 100 if final > 0 and initial > 0 else 0.0
     mdd = float(((equity_series - equity_series.cummax()) / equity_series.cummax()).min() * 100) if n_days else 0.0
     rets = equity_series.pct_change().dropna()
     sharpe = float(rets.mean() / rets.std() * math.sqrt(252)) if len(rets) > 2 and rets.std() > 0 else 0.0
+    downside = rets[rets < 0]
+    dstd = float(downside.std(ddof=0)) if len(downside) > 2 else 0.0
+    sortino = float(rets.mean() / dstd * math.sqrt(252)) if dstd > 0 else 0.0
+    avg_equity = float(equity_series.mean()) if n_days else initial
+    turnover = ((buy_notional + sell_notional) / 2 / avg_equity / years) if avg_equity > 0 else 0.0
     wins = [t for t in trades if t.get("return_pct", 0) > 0]
     win_rate = len(wins) / len(trades) * 100 if trades else 0.0
     avg_win = sum(t["return_pct"] for t in wins) / len(wins) if wins else 0.0
@@ -301,6 +354,8 @@ def _summary(initial: float, final: float, equity_series: pd.Series, trades: lis
         "cagr_pct": round(cagr, 2),
         "max_drawdown_pct": round(mdd, 2),
         "sharpe": round(sharpe, 2),
+        "sortino": round(sortino, 2),
+        "turnover_annual": round(turnover, 2),
         "win_rate_pct": round(win_rate, 1),
         "avg_win_pct": round(avg_win, 2),
         "avg_loss_pct": round(avg_loss, 2),

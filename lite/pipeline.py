@@ -11,7 +11,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from . import data, db, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring
+from . import alpha, data, db, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .universe import default_universe
 
 
@@ -53,6 +53,9 @@ def run_scan(force_fundamentals: bool = False) -> dict:
         regime["_nifty_close"] = nifty["Close"].dropna()
     else:
         regime["_nifty_close"] = pd.Series(dtype=float)
+    # Learn from history: tilt regime weights toward factors with recent positive IC.
+    ic_summary = alpha.ic_summary()
+    regime["weights"] = alpha.learned_weights(dict(regime["weights"]), ic_summary, regime["regime"])
     print(f"[lite] regime: {regime['regime']} (vix={regime['vix']}, adx={regime['adx']})")
 
     records = scoring.compute_scores(regime, fundas_list, px_frames)
@@ -60,6 +63,10 @@ def run_scan(force_fundamentals: bool = False) -> dict:
 
     # Sector rotation: tilt scores toward stocks inside strong sectors.
     records = rotation.apply_sector_rotation(records, fundas_map)
+    # Factor attribution: record what actually drove each final score.
+    for r in records:
+        fc = r.setdefault("factor_contributions", {})
+        fc["sector_boost"] = r.get("sector_boost")
 
     records.sort(key=lambda r: r.get("score") or 0, reverse=True)
     for i, r in enumerate(records, start=1):
@@ -85,6 +92,24 @@ def run_scan(force_fundamentals: bool = False) -> dict:
     db.upsert_scores(mb_records)
     db.snapshot_scores(mb_records, date.today().isoformat(), regime["regime"])
     db.snapshot_mb_candidates(mb_records, date.today().isoformat(), regime["regime"])
+
+    # Watchlist intelligence: daily idea generator (RS leaders / surges / MB elite / top sectors).
+    try:
+        events = watchlist.detect_events(mb_records, prev, fundas_map, date.today().isoformat())
+        if events:
+            db.save_watchlist_events(events, date.today().isoformat())
+            print(f"[lite] watchlist: {len(events)} events")
+    except Exception as exc:
+        print(f"  ⚠️ watchlist events failed: {exc}")
+
+    # Alpha decay + factor IC: measure whether the model actually predicted returns.
+    try:
+        n_alpha = alpha.update_alpha_tracking(px_frames)
+        n_ic = alpha.compute_factor_ics(px_frames)
+        if n_alpha or n_ic:
+            print(f"[lite] alpha: {n_alpha} horizon rows, {n_ic} factor ICs")
+    except Exception as exc:
+        print(f"  ⚠️ alpha/IC update failed: {exc}")
     for r in mb_records:
         old = prev.get(r["symbol"]) or {}
         r["prev_score"] = old.get("score")

@@ -98,6 +98,8 @@ def quality_score(f: dict) -> Optional[float]:
     roce = sigmoid(f.get("roce"), 18, 10)
     fcf = sigmoid(f.get("fcf_margin"), 5, 8)
     stability = institutional_quality_score(f)
+    # Quality of earnings: CFO/PAT ≈ 1 is healthy; profits without cash is a red flag.
+    cfo_pat = sigmoid(f.get("cfo_pat_ratio"), 1.0, 0.5)
     de = f.get("debt_equity")
     if is_financial(f.get("sector")):
         debt = 60.0  # banks/financials carry structurally high leverage
@@ -105,7 +107,9 @@ def quality_score(f: dict) -> Optional[float]:
         debt = 100 - sigmoid(de, 0.6, 0.5)
     else:
         debt = None
-    return _weighted([(roe, 0.30), (roce, 0.30), (fcf, 0.12), (debt, 0.13), (stability, 0.15)])
+    return _weighted(
+        [(roe, 0.28), (roce, 0.28), (fcf, 0.10), (cfo_pat, 0.08), (debt, 0.11), (stability, 0.15)]
+    )
 
 
 def margin_expansion_score(f: dict) -> Optional[float]:
@@ -125,7 +129,11 @@ def growth_score(f: dict) -> Optional[float]:
     else:
         accel = _clamp(accel)
     margin = margin_expansion_score(f)
-    return _weighted([(sales, 0.35), (profit, 0.30), (accel, 0.20), (margin, 0.15)])
+    # CFO growth — earnings backed by growing operating cash flow.
+    cfo_growth = sigmoid(f.get("cfo_growth") * 100, 10, 15) if f.get("cfo_growth") is not None else None
+    return _weighted(
+        [(sales, 0.32), (profit, 0.28), (accel, 0.18), (margin, 0.12), (cfo_growth, 0.10)]
+    )
 
 
 def momentum_score(px: dict, benchmark_ret6: Optional[float]) -> Optional[float]:
@@ -355,7 +363,16 @@ def compute_scores(
         total = _clamp(total + rs_boost_for(rs_rank))
         # Data-confidence dampener: partial fundamentals can't rank as highly.
         confidence = f.get("data_confidence")
-        total = apply_confidence(total, confidence)
+        conf_factor = confidence_factor(confidence)
+        total = _clamp(total * conf_factor)
+        # Factor attribution: each factor's contribution to the final score.
+        contrib: dict[str, Optional[float]] = {}
+        for key in ("quality", "growth", "momentum", "valuation", "risk"):
+            v = parts.get(key)
+            contrib[key] = round(v * weights[key] * conf_factor, 1) if v is not None else None
+        rs_boost = rs_boost_for(rs_rank)
+        contrib["rs_boost"] = round(rs_boost * conf_factor, 1) if rs_boost else None
+        contrib["sector_boost"] = None  # attached post-rotation by the pipeline
         parts["score"] = round(total, 1)
         parts["regime"] = regime["regime"]
         parts["trend_ok"] = bool(row.get("trend_ok"))
@@ -365,10 +382,12 @@ def compute_scores(
         parts["rs_3m"] = row.get("rs_3m")
         parts["rs_6m"] = row.get("rs_6m")
         parts["rs_12m"] = row.get("rs_12m")
-        parts["rs_boost"] = rs_boost_for(rs_rank)
+        parts["rs_boost"] = rs_boost
         parts["data_confidence"] = confidence
         parts["institutional_quality"] = institutional_quality_score(f)
         parts["revision_score"] = revision_score(f)
+        parts["factor_contributions"] = contrib
+        parts["vol"] = row.get("vol")
         records.append(parts)
     return records
 

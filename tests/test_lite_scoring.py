@@ -419,6 +419,170 @@ def test_walk_forward_requires_history():
     assert not res.get("folds")
 
 
+# ── Quality of earnings (Phase 6) ───────────────────────────────────────────
+
+def test_cfo_pat_ratio_in_quality():
+    good = {"roe": 20, "roce": 25, "fcf_margin": 8, "debt_equity": 0.3, "sector": "Technology", "cfo_pat_ratio": 1.4}
+    red = {"roe": 20, "roce": 25, "fcf_margin": 8, "debt_equity": 0.3, "sector": "Technology", "cfo_pat_ratio": -0.5}
+    assert scoring.quality_score(good) > scoring.quality_score(red) + 5
+
+
+def test_cfo_growth_in_growth():
+    good = {"sales_growth": 15, "profit_growth": 15, "eps_accel": 50, "cfo_growth": 0.25}
+    weak = {"sales_growth": 15, "profit_growth": 15, "eps_accel": 50, "cfo_growth": -0.2}
+    assert scoring.growth_score(good) > scoring.growth_score(weak) + 5
+
+
+# ── Factor attribution (Phase 1) ────────────────────────────────────────────
+
+def test_factor_contributions_explain_score():
+    import pandas as pd
+
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+
+    def frame(closes):
+        s = pd.Series(closes, index=idx)
+        return pd.DataFrame({"close": s, "high": s + 1, "low": s - 1, "volume": pd.Series([1_000_000] * 300, index=idx)})
+
+    prices = {"X.NS": frame([100 + i * 0.2 for i in range(300)])}
+    scoring.attach_indicators(prices)
+    fundas = [
+        {
+            "symbol": "X.NS", "roe": 22, "roce": 26, "debt_equity": 0.2, "sales_growth": 18,
+            "profit_growth": 20, "pe": 20, "pb": 3, "sector": "Technology", "data_confidence": 100,
+        }
+    ]
+    regime = {"regime": "BULL", "weights": {"quality": 0.2, "growth": 0.3, "momentum": 0.35, "valuation": 0.1, "risk": 0.05}}
+    recs = scoring.compute_scores(regime, fundas, prices)
+    r = recs[0]
+    fc = r["factor_contributions"]
+    assert set(fc) >= {"quality", "growth", "momentum", "valuation", "risk", "rs_boost"}
+    contrib_sum = sum(v for v in fc.values() if v is not None)
+    assert abs(contrib_sum - r["score"]) < 2.5  # contributions add up to the score
+
+
+# ── Kelly-Lite sizing (Phase 3) ─────────────────────────────────────────────
+
+def test_kelly_lite_prefers_low_vol_quality():
+    from lite import portfolio
+
+    recs = [
+        {"symbol": "A.NS", "pos_score": 80, "quality": 95, "vol": 0.18, "mb_bucket": "STRONG", "sector": "IT"},
+        {"symbol": "B.NS", "pos_score": 80, "quality": 40, "vol": 0.60, "mb_bucket": "WATCHLIST", "sector": "IT"},
+    ]
+    alloc = portfolio.build_allocation(recs, equity_pct=50, top_n=2, mode="kelly")
+    by = {a["symbol"]: a for a in alloc}
+    assert by["A.NS"]["weight_pct"] > by["B.NS"]["weight_pct"] * 2
+    assert abs(sum(a["weight_pct"] for a in alloc) - 50.0) < 0.01
+
+
+# ── Market breadth (Phase 7) ────────────────────────────────────────────────
+
+def test_breadth_computes_percentages():
+    import pandas as pd
+
+    from lite import breadth
+
+    idx = pd.date_range("2024-01-01", periods=250, freq="B")
+    up = pd.Series([100 + i * 0.5 for i in range(250)], index=idx)  # above every SMA
+    flat = pd.Series([200.0] * 250, index=idx)  # exactly at the 200-SMA → not above
+    b = breadth.compute_breadth({"UP.NS": pd.DataFrame({"close": up}), "FLAT.NS": pd.DataFrame({"close": flat})})
+    assert b["n"] == 2
+    assert b["above_20"] == 50.0 and b["above_50"] == 50.0 and b["above_200"] == 50.0
+    assert b["market_health"] == 50.0
+
+
+# ── Watchlist intelligence (Phase 8) ────────────────────────────────────────
+
+def test_watchlist_events_fire():
+    from lite import watchlist
+
+    fundas = {"A.NS": {"sector": "IT"}, "B.NS": {"sector": "IT"}, "C.NS": {"sector": "CEMENT"}}
+    records = [
+        {"symbol": "A.NS", "rs_rank": 98.0, "score": 85.0, "mb_score": 92.0},
+        {"symbol": "B.NS", "rs_rank": 50.0, "score": 60.0, "mb_score": 55.0},
+        {"symbol": "C.NS", "rs_rank": 30.0, "score": 45.0, "mb_score": 40.0},
+    ]
+    events = watchlist.detect_events(records, {"A.NS": {"score": 70.0}}, fundas, "2026-08-16")
+    ev = {(e["symbol"], e["event"]) for e in events}
+    assert ("A.NS", "RS_LEADER") in ev
+    assert ("A.NS", "SCORE_SURGE") in ev
+    assert ("A.NS", "MB_ELITE") in ev
+    assert ("A.NS", "SECTOR_TOP3") in ev
+
+
+# ── Alpha decay + factor IC (Phases 2/4/5) ──────────────────────────────────
+
+def test_alpha_forward_returns_and_factor_ic():
+    import os
+    import tempfile
+
+    import pandas as pd
+
+    from lite import alpha, db
+
+    tmp = tempfile.mkdtemp()
+    old_path = db.DB_PATH
+    db.DB_PATH = os.path.join(tmp, "t.db")
+    try:
+        db.init_db([])
+        n = 12
+        idx = pd.date_range("2025-01-01", periods=400, freq="B")
+        p_anchor = 200
+        anchor = idx[p_anchor]
+        frames = {}
+        records = []
+        for i in range(n):
+            growth = 0.001 * (i + 1)
+            closes = [100.0] * p_anchor + [100 * (1 + growth * j) for j in range(1, 400 - p_anchor + 1)]
+            frames[f"S{i}.NS"] = pd.DataFrame({"close": pd.Series(closes, index=idx)})
+            records.append(
+                {
+                    "symbol": f"S{i}.NS", "score": 50 + i, "rank": i + 1, "mb_score": 60.0,
+                    "mb_bucket": "WATCHLIST", "trend_ok": False, "regime": "BULL",
+                    "quality": 40 + i, "growth": 40 + i, "momentum": 40 + i * 5, "valuation": 50.0,
+                    "risk": 50.0, "rs_rank": 30 + i * 5, "opp_score": 50 + i, "data_confidence": 100,
+                }
+            )
+        db.snapshot_scores(records, anchor.date().isoformat(), "BULL")
+
+        assert alpha.update_alpha_tracking(frames) > 0
+        by_h = {r["horizon_days"]: r for r in db.load_alpha_rows()}
+        assert 30 in by_h and by_h[30]["n"] == n
+        assert by_h[30]["avg_return_pct"] > 0
+
+        assert alpha.compute_factor_ics(frames) > 0
+        summary = alpha.ic_summary()
+        assert "momentum" in summary["factors"]
+        assert summary["factors"]["momentum"]["avg_ic"] > 0.5  # momentum predicts returns here
+
+        base = {"quality": 0.3, "growth": 0.25, "momentum": 0.2, "valuation": 0.15, "risk": 0.1}
+        w = alpha.learned_weights(base, summary, "BULL")
+        assert w["momentum"] > base["momentum"] + 0.01
+        assert abs(sum(w.values()) - 1.0) < 0.02
+    finally:
+        db.DB_PATH = old_path
+
+
+# ── Backtest benchmarking (Phase 9) ─────────────────────────────────────────
+
+def test_backtest_has_sortino_turnover_and_universe_bench():
+    import pandas as pd
+
+    from lite import backtest
+
+    idx = pd.date_range("2022-01-01", periods=700, freq="B")
+    n = len(idx)
+    up = pd.Series([100 * (1.0008 ** i) for i in range(n)], index=idx)
+    flat = pd.Series([100.0] * n, index=idx)
+    res = backtest.run_backtest({"UP.NS": pd.DataFrame({"close": up}), "FLAT.NS": pd.DataFrame({"close": flat})}, {"years": 2, "top_n": 1})
+    s = res["summary"]
+    assert "sortino" in s and "turnover_annual" in s
+    assert res["universe_curve"]
+    assert s.get("universe_cagr_pct") is not None
+    assert s.get("universe_alpha_pct") is not None
+
+
 # ── MB candidates tracking ──────────────────────────────────────────────────
 
 def test_mb_candidates_snapshot_and_history(tmp_path, monkeypatch):

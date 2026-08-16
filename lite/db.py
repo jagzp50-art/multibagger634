@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     debt_trend      REAL,
     revenue_accel_annual REAL,
     earnings_vol    REAL,
-    sales_vol       REAL
+    sales_vol       REAL,
+    cfo_pat_ratio   REAL,
+    cfo_growth      REAL
 );
 CREATE TABLE IF NOT EXISTS scores (
     symbol   TEXT PRIMARY KEY,
@@ -97,6 +99,7 @@ CREATE TABLE IF NOT EXISTS scores (
     revision_score REAL,
     compounder_score REAL,
     data_confidence REAL,
+    factor_contributions TEXT,
     updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS backtests (
@@ -164,6 +167,37 @@ CREATE TABLE IF NOT EXISTS financial_history (
     PRIMARY KEY (symbol, year)
 );
 CREATE INDEX IF NOT EXISTS idx_financial_history_sym ON financial_history (symbol, year);
+CREATE TABLE IF NOT EXISTS watchlist_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_date  TEXT NOT NULL,
+    symbol     TEXT NOT NULL,
+    event      TEXT NOT NULL,
+    detail     TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_watchlist_events ON watchlist_events (scan_date, event);
+CREATE TABLE IF NOT EXISTS alpha_tracking (
+    scan_date     TEXT NOT NULL,
+    horizon_days  INTEGER NOT NULL,
+    avg_return_pct REAL,
+    median_return_pct REAL,
+    hit_rate_pct  REAL,
+    n             INTEGER,
+    regime        TEXT,
+    created_at    TEXT,
+    PRIMARY KEY (scan_date, horizon_days)
+);
+CREATE TABLE IF NOT EXISTS factor_ic (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_date   TEXT NOT NULL,
+    factor      TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    ic          REAL,
+    regime      TEXT,
+    n           INTEGER,
+    created_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_factor_ic ON factor_ic (scan_date, factor);
 """
 
 
@@ -210,6 +244,8 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "revenue_accel_annual",
                 "earnings_vol",
                 "sales_vol",
+                "cfo_pat_ratio",
+                "cfo_growth",
             ],
         )
         _migrate_columns(
@@ -230,6 +266,7 @@ def init_db(universe: Optional[Iterable[dict]] = None) -> None:
                 "revision_score",
                 "compounder_score",
                 "data_confidence",
+                "factor_contributions",
             ],
         )
         _migrate_columns(
@@ -363,9 +400,9 @@ def upsert_fundamentals(f: dict) -> None:
              data_confidence, roe_stability, roce_stability, profit_stability,
              sales_stability, margin_stability, fcf_stability, sales_cagr_5y,
              profit_cagr_5y, fcf_cagr_5y, debt_trend, revenue_accel_annual,
-             earnings_vol, sales_vol)
+             earnings_vol, sales_vol, cfo_pat_ratio, cfo_growth)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f.get("symbol"),
@@ -402,6 +439,8 @@ def upsert_fundamentals(f: dict) -> None:
                 _num(f.get("revenue_accel_annual")),
                 _num(f.get("earnings_vol")),
                 _num(f.get("sales_vol")),
+                _num(f.get("cfo_pat_ratio")),
+                _num(f.get("cfo_growth")),
             ),
         )
         conn.commit()
@@ -449,9 +488,9 @@ def upsert_scores(records: Iterable[dict]) -> None:
              mb_score, mb_bucket, mb_checklist, regime, rank, rs_rank, rs_1m, rs_3m,
              rs_6m, rs_12m, rs_boost, accumulation, pos_score, opp_score, sector_boost,
              trend_ok, institutional_quality, revision_score, compounder_score,
-             data_confidence, updated_at)
+             data_confidence, factor_contributions, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -482,6 +521,7 @@ def upsert_scores(records: Iterable[dict]) -> None:
                     _num(r.get("revision_score")),
                     _num(r.get("compounder_score")),
                     _num(r.get("data_confidence")),
+                    json.dumps(r.get("factor_contributions") or {}),
                     datetime.now().isoformat(timespec="seconds"),
                 )
                 for r in records
@@ -503,6 +543,10 @@ def load_scores() -> list[dict]:
                 d["mb_checklist"] = json.loads(d.get("mb_checklist") or "[]")
             except (TypeError, ValueError):
                 d["mb_checklist"] = []
+            try:
+                d["factor_contributions"] = json.loads(d.get("factor_contributions") or "{}")
+            except (TypeError, ValueError):
+                d["factor_contributions"] = {}
             out.append(d)
         return out
     finally:
@@ -597,6 +641,34 @@ def snapshot_scores(records: Iterable[dict], scan_date: str, regime: str) -> int
         )
         conn.commit()
         return len(records)
+    finally:
+        conn.close()
+
+
+def score_snapshot_times(limit: int = 30) -> list[str]:
+    """Distinct scan timestamps (newest first) — one per completed scan."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT created_at FROM score_history ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r["created_at"] for r in rows]
+    finally:
+        conn.close()
+
+
+def score_history_at(created_at: str) -> list[dict]:
+    """Full factor rows for one scan snapshot (alpha decay / factor IC inputs)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, scan_date, score, rank, mb_score, mb_bucket, trend_ok, regime, quality, "
+            "growth, momentum, valuation, risk, rs_rank, sector_boost, opp_score, data_confidence "
+            "FROM score_history WHERE created_at = ?",
+            (created_at,),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -823,6 +895,140 @@ def load_financial_history(symbol: str) -> list[dict]:
             (symbol,),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── Watchlist intelligence / alpha decay / factor IC ────────────────────────
+
+def save_watchlist_events(events: Iterable[dict], scan_date: str) -> int:
+    conn = get_connection()
+    ts = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn.executemany(
+            "INSERT INTO watchlist_events (scan_date, symbol, event, detail, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(scan_date, e.get("symbol"), e.get("event"), e.get("detail"), ts) for e in events],
+        )
+        conn.commit()
+        return len(events)
+    finally:
+        conn.close()
+
+
+def load_watchlist_events(scan_date: Optional[str] = None, limit: int = 60) -> list[dict]:
+    conn = get_connection()
+    try:
+        if scan_date:
+            rows = conn.execute(
+                "SELECT scan_date, symbol, event, detail, created_at FROM watchlist_events "
+                "WHERE scan_date = ? ORDER BY id DESC LIMIT ?",
+                (scan_date, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT scan_date, symbol, event, detail, created_at FROM watchlist_events "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def latest_watchlist_scan() -> Optional[str]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT MAX(scan_date) AS d FROM watchlist_events").fetchone()
+        return row["d"] if row else None
+    finally:
+        conn.close()
+
+
+def save_alpha_rows(rows: Iterable[dict]) -> int:
+    """Upsert forward-return aggregates per (snapshot date, horizon)."""
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO alpha_tracking "
+            "(scan_date, horizon_days, avg_return_pct, median_return_pct, hit_rate_pct, n, regime, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["scan_date"],
+                    int(r["horizon_days"]),
+                    _num(r.get("avg_return_pct")),
+                    _num(r.get("median_return_pct")),
+                    _num(r.get("hit_rate_pct")),
+                    r.get("n"),
+                    r.get("regime"),
+                    datetime.now().isoformat(timespec="seconds"),
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def load_alpha_rows(limit_horizons: int = 5) -> list[dict]:
+    """Most recent forward-return aggregate per horizon."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT scan_date, horizon_days, avg_return_pct, median_return_pct, hit_rate_pct, n, regime "
+            "FROM alpha_tracking ORDER BY scan_date DESC, horizon_days LIMIT ?",
+            (limit_horizons * 4,),
+        ).fetchall()
+        out = [dict(r) for r in rows]
+        # one row per horizon: the latest scan_date
+        seen: set = set()
+        latest = []
+        for r in out:
+            if r["horizon_days"] not in seen:
+                seen.add(r["horizon_days"])
+                latest.append(r)
+        return latest
+    finally:
+        conn.close()
+
+
+def save_factor_ic(rows: Iterable[dict]) -> int:
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "INSERT INTO factor_ic (scan_date, factor, horizon_days, ic, regime, n, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["scan_date"],
+                    r["factor"],
+                    int(r.get("horizon_days", 30)),
+                    _num(r.get("ic")),
+                    r.get("regime"),
+                    r.get("n"),
+                    datetime.now().isoformat(timespec="seconds"),
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def load_factor_ic(limit: int = 200) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT scan_date, factor, horizon_days, ic, regime, n, created_at "
+            "FROM factor_ic ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
     finally:
         conn.close()
 
