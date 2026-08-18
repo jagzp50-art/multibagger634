@@ -1,4 +1,4 @@
-# ── Sovereign Lite v13 — single-user dependency set ─────────────────────────
+# ── Sovereign Lite v14 — single-user dependency set ─────────────────────────
 # No Redis, Celery, Alpha Vantage, XGBoost, Prometheus, or browser automation.
 fastapi>=0.110.0,<1.0.0
 uvicorn>=0.30.0,<1.0.0

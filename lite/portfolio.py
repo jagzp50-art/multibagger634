@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — portfolio construction layer.
+Sovereign Lite v14 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
 (higher = better). Allocation weights are conviction-based: the #1 position
@@ -10,10 +10,17 @@ v8: Kelly-Lite 2.0 adds a drawdown penalty (low vol alone isn't enough — a
 stock with catastrophic drawdowns gets penalized), allocation enforces a hard
 sector cap (no 45% Financials book), and factor_exposure() surfaces crowding.
 
+v14: rebalance_plan() — the tax-aware rebalancing engine. Compares the
+previous saved allocation to the proposed target, classifies every position
+as HOLD / ADD / TRIM / SELL / BUY, and estimates the tax hit on realized
+gains (STCG vs LTCG by holding period) plus trading costs, so a monthly
+rebalance can be judged by its after-tax value instead of executed blindly.
+
 All inputs degrade to None-safe math via `scoring._weighted`.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from . import scoring
@@ -207,6 +214,153 @@ def portfolio_risk(alloc: list[dict], records_by_symbol: dict[str, dict],
         "avg_quality": round(avg_quality, 1) if avg_quality is not None else None,
         "avg_confidence": round(avg_conf, 1) if avg_conf is not None else None,
         "risk_grade": grade,
+    }
+
+
+# ── Tax-aware rebalancing (v14) ────────────────────────────────────────────
+
+REBALANCE_PARAMS = {
+    # Flat Indian equity tax assumptions (delivery): 30% STCG within a year,
+    # 10% LTCG beyond it. Gains on sold names are assumed at `assumed_gain_pct`
+    # — the plan is advisory; replace with real cost basis when available.
+    "tax_stcg_rate": 0.30,
+    "tax_ltcg_rate": 0.10,
+    "ltcg_days": 365,
+    "assumed_gain_pct": 20.0,
+    "round_trip_cost_pct": 0.50,  # two sides × ~0.25% (the backtest cost stack)
+    "min_delta_pct": 2.0,         # ignore weight drift below this (no churn)
+    "capital": 1_000_000,         # ₹10L book used to translate % → notional
+}
+
+
+def rebalance_plan(
+    target: list[dict],
+    prev: Optional[list[dict]],
+    params: Optional[dict] = None,
+    first_seen: Optional[dict] = None,
+    price_pairs: Optional[dict] = None,
+) -> dict:
+    """Tax-aware rebalance from the previous saved allocation to `target`.
+
+    The core anti-churn rule: a name still in the top-N with drift under
+    `min_delta_pct` is HOLD — the engine will NOT sell a winner just to
+    re-buy it (that's how turnover and taxes destroy returns). Only names
+    that drop out of the target, or drift beyond tolerance, realize gains,
+    taxed as STCG or LTCG by how long the name has been held (first-seen
+    scan date as the holding-start proxy).
+
+    `price_pairs` is an optional {symbol: (entry_price, current_price)} map;
+    when present, realized gains use the real entry vs current price instead
+    of the `assumed_gain_pct` fallback.
+    """
+    p = {**REBALANCE_PARAMS, **(params or {})}
+    first_seen = first_seen or {}
+    price_pairs = price_pairs or {}
+    prev = prev or []
+    today = date.today()
+    capital = float(p.get("capital", 1_000_000))
+    min_delta = float(p.get("min_delta_pct", 2.0))
+
+    prev_map = {r["symbol"]: r for r in prev}
+    target_map = {a["symbol"]: a for a in target}
+    trades: list[dict] = []
+    realized = 0.0
+    buy_notional = 0.0
+    stcg_tax = 0.0
+    ltcg_tax = 0.0
+
+    for sym, pr in prev_map.items():
+        pw = float(pr.get("weight_pct") or 0.0)
+        tw = float((target_map.get(sym) or {}).get("weight_pct") or 0.0)
+        delta = tw - pw
+        if abs(delta) <= min_delta and sym in target_map:
+            side, notional, reason = "HOLD", 0.0, "within tolerance — no churn"
+        elif sym not in target_map:
+            side, notional, reason = "SELL", pw / 100.0 * capital, "dropped out of top-N"
+        elif delta > 0:
+            side, notional, reason = "ADD", delta / 100.0 * capital, "conviction up"
+        else:
+            side, notional, reason = "TRIM", -delta / 100.0 * capital, "conviction down"
+
+        tax, kind = 0.0, None
+        est_gain_pct = None
+        if side in ("SELL", "TRIM") and notional > 0:
+            pair = price_pairs.get(sym)
+            if pair and pair[0] and pair[1] and pair[0] > 0:
+                est_gain_pct = (pair[1] / pair[0] - 1.0) * 100.0
+            else:
+                est_gain_pct = float(p.get("assumed_gain_pct", 20.0))
+            gain = notional * est_gain_pct / 100.0
+            fs = first_seen.get(sym)
+            held_days = (today - date.fromisoformat(fs)).days if fs else 0
+            if held_days > float(p.get("ltcg_days", 365)):
+                kind = "LTCG"
+                tax = gain * float(p.get("tax_ltcg_rate", 0.10))
+            else:
+                kind = "STCG"
+                tax = gain * float(p.get("tax_stcg_rate", 0.30))
+            if kind == "LTCG":
+                ltcg_tax += tax
+            else:
+                stcg_tax += tax
+            realized += notional
+
+        trades.append(
+            {
+                "symbol": sym,
+                "side": side,
+                "prev_pct": round(pw, 2),
+                "target_pct": round(tw, 2),
+                "notional": round(notional, 2),
+                "est_tax": round(tax, 2),
+                "est_gain_pct": round(est_gain_pct, 2) if est_gain_pct is not None else None,
+                "tax_kind": kind,
+                "reason": reason,
+            }
+        )
+
+    for sym, a in target_map.items():
+        if sym not in prev_map:
+            notional = float(a.get("weight_pct") or 0.0) / 100.0 * capital
+            buy_notional += notional
+            trades.append(
+                {
+                    "symbol": sym,
+                    "side": "BUY",
+                    "prev_pct": 0.0,
+                    "target_pct": round(float(a.get("weight_pct") or 0.0), 2),
+                    "notional": round(notional, 2),
+                    "est_tax": 0.0,
+                    "est_gain_pct": None,
+                    "tax_kind": None,
+                    "reason": "new in top-N",
+                }
+            )
+
+    order = {"SELL": 0, "TRIM": 1, "BUY": 2, "ADD": 3, "HOLD": 4}
+    trades.sort(key=lambda t: order.get(t["side"], 9))
+
+    total_tax = stcg_tax + ltcg_tax
+    cost_est = (realized + buy_notional) * float(p.get("round_trip_cost_pct", 0.5)) / 100.0
+    traded = realized + buy_notional
+    return {
+        "n_prev": len(prev),
+        "n_target": len(target),
+        "trades": trades,
+        "realized_notional": round(realized, 2),
+        "buy_notional": round(buy_notional, 2),
+        "cost_est": round(cost_est, 2),
+        "stcg_tax": round(stcg_tax, 2),
+        "ltcg_tax": round(ltcg_tax, 2),
+        "total_tax": round(total_tax, 2),
+        "total_drag_pct": round((total_tax + cost_est) / capital * 100, 2) if capital else 0.0,
+        "turnover_pct": round(traded / capital * 100, 1) if capital else 0.0,
+        "assumptions": {
+            "gain_pct": p.get("assumed_gain_pct"),
+            "stcg_rate": p.get("tax_stcg_rate"),
+            "ltcg_rate": p.get("tax_ltcg_rate"),
+            "capital": capital,
+        },
     }
 
 

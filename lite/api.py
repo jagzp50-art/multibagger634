@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — FastAPI application.
+Sovereign Lite v14 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -499,14 +499,32 @@ def create_app() -> FastAPI:
             rows = db.load_prices(sym)
             if rows:
                 frames[sym] = indicators.to_dataframe(rows)
-        result = bt.run_backtest(frames, params or {})
+        stored = _stored_benchmarks()
+        result = bt.run_backtest(frames, params or {}, benchmarks=stored)
         if not result.get("trades") and not result.get("equity_curve"):
             raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
-        # Benchmark comparison: same window, buy-and-hold NIFTY 50.
-        bench = _benchmark_stats(result.get("equity_curve") or [], result["summary"].get("initial_capital"))
-        if bench:
-            result["summary"].update(bench["summary"])
-            result["benchmark_curve"] = bench["curve"]
+        # Back-compat summary fields (chart + stat cards read these): pull the
+        # stored NIFTY 50 stats; fall back to a live fetch only when nothing
+        # has been stored yet (e.g. before the first benchmark refresh).
+        nifty = next((b for b in result.get("benchmarks") or [] if b["name"] == "NIFTY 50"), None)
+        if nifty:
+            result["summary"].update(
+                {
+                    "benchmark": "NIFTY 50",
+                    "benchmark_return_pct": nifty["return_pct"],
+                    "benchmark_cagr_pct": nifty["cagr_pct"],
+                    "benchmark_max_dd_pct": nifty["max_drawdown_pct"],
+                    "alpha_pct": nifty["alpha_pct"],
+                }
+            )
+            curves = result.get("benchmark_curves") or {}
+            if "NIFTY 50" in curves:
+                result["benchmark_curve"] = curves["NIFTY 50"]
+        elif not result.get("benchmarks"):
+            bench = _benchmark_stats(result.get("equity_curve") or [], result["summary"].get("initial_capital"))
+            if bench:
+                result["summary"].update(bench["summary"])
+                result["benchmark_curve"] = bench["curve"]
         saved_id = db.save_backtest(result["params"], result["equity_curve"], result["trades"], result["summary"])
         return _json_safe({**result, "id": saved_id})
 
@@ -519,7 +537,7 @@ def create_app() -> FastAPI:
             rows = db.load_prices(sym)
             if rows:
                 frames[sym] = indicators.to_dataframe(rows)
-        result = bt.walk_forward(frames, params or {})
+        result = bt.walk_forward(frames, params or {}, benchmarks=_stored_benchmarks())
         if not result.get("folds"):
             raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
         return _json_safe(result)
@@ -527,6 +545,56 @@ def create_app() -> FastAPI:
     @app.get("/api/backtests")
     def backtests(limit: int = 10):
         return _json_safe(db.load_backtests(limit=limit))
+
+    # ── Benchmark indices + tax-aware rebalancing (v14) ──────────────────────
+
+    @app.get("/api/benchmarks")
+    def benchmarks_status():
+        """Stored index benchmark coverage (NIFTY 50 / Midcap 150 / Smallcap 250)."""
+        return _json_safe(
+            {
+                "coverage": db.benchmark_coverage(),
+                "definitions": [{"key": b["key"], "tickers": b["tickers"]} for b in data.BENCHMARKS],
+            }
+        )
+
+    @app.post("/api/benchmarks/refresh")
+    def benchmarks_refresh(force: bool = False):
+        """Fetch + persist the three index benchmarks (best-effort per index)."""
+        return _json_safe(data.refresh_benchmarks(force=force))
+
+    @app.post("/api/rebalance")
+    def rebalance_endpoint(top_n: int = 8, mode: str = "kelly", max_sector_weight: float = 25.0):
+        """Tax-aware plan from the last saved allocation to today's target book:
+        HOLD / ADD / TRIM / SELL / BUY per name, STCG vs LTCG on realized
+        gains (real entry vs current price when available), and a total drag
+        estimate so a rebalance can be judged by its after-tax value."""
+        prev_snap = db.latest_allocation()
+        regime = _fresh_regime()
+        scores = db.load_scores()
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        rows = _merge(scores, fundas)
+        equity_pct = float(regime.get("allocation", {}).get("equity", 60))
+        target = portfolio.build_allocation(
+            rows, equity_pct, top_n=top_n, mode=mode, max_sector_weight=max_sector_weight
+        )
+        first_seen = {}
+        for sym in db.universe_symbols():
+            fs = db.first_score_date(sym)
+            if fs:
+                first_seen[sym] = fs
+        pairs = _entry_price_pairs()
+        plan = portfolio.rebalance_plan(
+            target, (prev_snap or {}).get("rows") or [], first_seen=first_seen, price_pairs=pairs
+        )
+        return _json_safe(
+            {
+                "plan": plan,
+                "prev_scan_date": (prev_snap or {}).get("scan_date"),
+                "prev_mode": (prev_snap or {}).get("mode"),
+                "target": target,
+            }
+        )
 
     # ── Portfolio helpers ────────────────────────────────────────────────────
 
@@ -676,6 +744,37 @@ def _with_prev(rows: list[dict]) -> list[dict]:
             prev_rank - cur_rank if cur_rank is not None and prev_rank is not None else None
         )
     return rows
+
+
+def _stored_benchmarks() -> dict:
+    """Load the stored index benchmarks as {label: close Series} for backtests.
+    Uses the persisted table (point-in-time index data) instead of a live
+    network fetch that could silently disappear mid-request."""
+    out = {}
+    for key in ("NIFTY 50", "NIFTY MIDCAP 150", "NIFTY SMALLCAP 250"):
+        rows = db.load_benchmarks(key)
+        if rows:
+            out[key] = pd.Series([r["close"] for r in rows], index=[r["date"] for r in rows])
+    return out
+
+
+def _entry_price_pairs() -> dict:
+    """{symbol: (entry_price, current_price)} from stored prices — the holding's
+    first close on/after its first scored scan vs the latest close, so the
+    rebalance plan taxes real realized gains instead of assumed ones."""
+    pairs = {}
+    for sym in db.universe_symbols():
+        fs = db.first_score_date(sym)
+        if not fs:
+            continue
+        rows = db.load_prices(sym)
+        if not rows:
+            continue
+        entry = next((r["close"] for r in rows if r["date"] >= fs), None)
+        current = rows[-1]["close"]
+        if entry and current and entry > 0 and current > 0:
+            pairs[sym] = (entry, current)
+    return pairs
 
 
 def _benchmark_stats(curve: list, initial: float) -> Optional[dict]:

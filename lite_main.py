@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — application entrypoint.
+Sovereign Lite v14 — application entrypoint.
 
 Run:  python3 lite_main.py
 Serves the 5-screen dashboard + JSON API on :9005 (API_PORT / PORT aware).

@@ -1,11 +1,13 @@
 """
-Sovereign Lite v13 — SQLite data layer (exactly 5 tables).
+Sovereign Lite v14 — SQLite data layer.
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol
     fundamentals  latest point-in-time fundamentals per symbol
     scores        latest computed component + composite scores per symbol
     backtests     stored backtest runs (params / equity curve / summary)
+    benchmarks    stored index closes (NIFTY 50 / Midcap 150 / Smallcap 250)
+    allocations   saved portfolio allocations (for tax-aware rebalancing)
 """
 from __future__ import annotations
 
@@ -243,6 +245,23 @@ CREATE TABLE IF NOT EXISTS fundamentals_history (
     PRIMARY KEY (scan_date, symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_fundamentals_history ON fundamentals_history (symbol, scan_date);
+CREATE TABLE IF NOT EXISTS benchmarks (
+    symbol TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    close  REAL,
+    PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_benchmarks ON benchmarks (symbol, date);
+CREATE TABLE IF NOT EXISTS allocations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_date  TEXT NOT NULL,
+    mode       TEXT DEFAULT 'kelly',
+    symbol     TEXT NOT NULL,
+    weight_pct REAL,
+    sector     TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_allocations_date ON allocations (scan_date);
 """
 
 
@@ -460,6 +479,130 @@ def latest_price(symbol: str) -> Optional[dict]:
             (symbol,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ── Benchmarks (stored index closes) ────────────────────────────────────────
+
+def upsert_benchmarks(symbol: str, rows: Iterable[dict]) -> int:
+    """Store daily index closes (e.g. NIFTY 50 / MIDCAP 150 / SMALLCAP 250).
+    Rows are {date, close}; existing (symbol, date) pairs are replaced so
+    re-fetching is idempotent."""
+    conn = get_connection()
+    n = 0
+    try:
+        for r in rows:
+            if r.get("close") is None:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO benchmarks (symbol, date, close) VALUES (?, ?, ?)",
+                (symbol, r["date"], r["close"]),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def load_benchmarks(symbol: str, start: Optional[str] = None) -> list[dict]:
+    conn = get_connection()
+    try:
+        if start:
+            rows = conn.execute(
+                "SELECT date, close FROM benchmarks WHERE symbol = ? AND date >= ? ORDER BY date",
+                (symbol, start),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT date, close FROM benchmarks WHERE symbol = ? ORDER BY date",
+                (symbol,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def benchmark_coverage() -> dict:
+    """Per-symbol stored benchmark summary: rows, first/last date, latest close."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date "
+            "FROM benchmarks GROUP BY symbol ORDER BY symbol"
+        ).fetchall()
+        latest = {}
+        for r in conn.execute(
+            "SELECT symbol, date, close FROM benchmarks b "
+            "WHERE date = (SELECT MAX(date) FROM benchmarks b2 WHERE b2.symbol = b.symbol)"
+        ).fetchall():
+            latest[r["symbol"]] = {"date": r["date"], "close": r["close"]}
+        out = {}
+        for r in rows:
+            d = dict(r)
+            d["latest"] = latest.get(d["symbol"])
+            out[d["symbol"]] = d
+        return out
+    finally:
+        conn.close()
+
+
+# ── Saved allocations (rebalancing input) ───────────────────────────────────
+
+def save_allocation(alloc: Iterable[dict], mode: str = "kelly") -> int:
+    """Persist the current suggested allocation for the rebalance plan.
+    Each call appends a new dated snapshot; `latest_allocation` returns the
+    most recent one, which becomes the "previous book" for the next plan."""
+    conn = get_connection()
+    ts = datetime.now().isoformat(timespec="seconds")
+    scan_date = date.today().isoformat()
+    n = 0
+    try:
+        for a in alloc:
+            conn.execute(
+                "INSERT INTO allocations (scan_date, mode, symbol, weight_pct, sector, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (scan_date, mode, a.get("symbol"), a.get("weight_pct"), a.get("sector"), ts),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def latest_allocation() -> Optional[dict]:
+    """Most recent saved allocation snapshot, or None if never saved."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT scan_date, mode FROM allocations ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        rows = conn.execute(
+            "SELECT symbol, weight_pct, sector FROM allocations "
+            "WHERE scan_date = ? AND mode = ? ORDER BY weight_pct DESC",
+            (row["scan_date"], row["mode"]),
+        ).fetchall()
+        return {
+            "scan_date": row["scan_date"],
+            "mode": row["mode"],
+            "rows": [dict(r) for r in rows],
+        }
+    finally:
+        conn.close()
+
+
+def first_score_date(symbol: str) -> Optional[str]:
+    """First scan date a symbol was scored — proxy for when it was bought."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT MIN(scan_date) AS d FROM score_history WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        return row["d"] if row and row["d"] else None
     finally:
         conn.close()
 

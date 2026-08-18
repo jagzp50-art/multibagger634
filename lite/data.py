@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — yFinance-only data layer.
+Sovereign Lite v14 — yFinance-only data layer.
 
   - Price history: batched `yf.download` (one request per symbol, threaded by yf)
   - Fundamentals: per-symbol `Ticker.info` + quarterly income statement,
@@ -614,6 +614,76 @@ def fetch_fundamentals(symbols: list[str], force: bool = False) -> dict[str, dic
 
 
 # ── Benchmarks / regime inputs ──────────────────────────────────────────────
+
+# ── Stored index benchmarks ────────────────────────────────────────────────
+
+# True index benchmarks for backtests, fetched via yfinance and *stored* in
+# SQLite like prices (so backtests use point-in-time index data instead of a
+# live fetch that can silently disappear). The 150/250 index tickers exist on
+# Yahoo under their NSE names; alternate spellings are tried as fallbacks.
+BENCHMARKS = [
+    {"key": "NIFTY 50", "tickers": ["^NSEI"]},
+    {"key": "NIFTY MIDCAP 150", "tickers": ["NIFTYMIDCAP150.NS", "NIFTY_MIDCAP_150.NS"]},
+    {"key": "NIFTY SMALLCAP 250", "tickers": ["NIFTYSMLCAP250.NS", "NIFTY_SMALLCAP_250.NS"]},
+]
+
+BENCHMARK_FRESH_DAYS = 2
+
+
+def _benchmark_series(df: pd.DataFrame) -> pd.Series:
+    """Flatten a yfinance download into a clean close Series."""
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = df.columns.get_level_values(0)
+    closes = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
+    return closes.dropna().astype(float)
+
+
+def refresh_benchmarks(force: bool = False) -> dict:
+    """Fetch and persist all benchmark indices. Skips indices fetched within
+    the freshness window unless `force`. Returns per-index rows + errors;
+    never raises (network failures are recorded, not fatal)."""
+    import yfinance as yf
+
+    coverage = db.benchmark_coverage()
+    out: dict = {"rows": {}, "errors": []}
+    today = datetime.now().date()
+    for b in BENCHMARKS:
+        key = b["key"]
+        cov = coverage.get(key)
+        if not force and cov and cov.get("last_date"):
+            age = (today - datetime.fromisoformat(cov["last_date"]).date()).days
+            if age <= BENCHMARK_FRESH_DAYS:
+                out["rows"][key] = 0  # already fresh, skipped
+                continue
+        fetched = None
+        for ticker in b["tickers"]:
+            try:
+                df = yf.download(
+                    tickers=ticker,
+                    period=HISTORY_PERIOD,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                )
+                s = _benchmark_series(df)
+                if len(s) >= 60:
+                    fetched = s
+                    break
+            except Exception as exc:  # pragma: no cover - network
+                out["errors"].append(f"{key} ({ticker}): {exc}")
+        if fetched is None:
+            out["errors"].append(f"{key}: no data fetched")
+            continue
+        rows = [
+            {"date": idx.date().isoformat(), "close": float(v)}
+            for idx, v in fetched.items()
+        ]
+        out["rows"][key] = db.upsert_benchmarks(key, rows)
+    return out
+
 
 def fetch_benchmark(symbol: str = "^NSEI", period: str = HISTORY_PERIOD) -> Optional[pd.DataFrame]:
     import yfinance as yf

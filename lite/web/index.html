@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v13</title>
+<title>Sovereign Lite v14</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -176,7 +176,7 @@ function Nav({tab,setTab,regime}){
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v13 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v14 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -808,10 +808,18 @@ function Portfolio(){
   const [qty,setQty] = useState('');
   const [avg,setAvg] = useState('');
   const [err,setErr] = useState(null);
+  const [rebal,setRebal] = useState(null);
+  const [rebalLoading,setRebalLoading] = useState(false);
+
+  const loadRebal = ()=>{
+    setRebalLoading(true);
+    j('/api/rebalance?top_n=8&mode=kelly&max_sector_weight=25', {method:'POST'}).then(setRebal).catch(()=>{}).finally(()=>setRebalLoading(false));
+  };
 
   useEffect(()=>{ localStorage.setItem(HOLDINGS_KEY, JSON.stringify(holdings)); },[holdings]);
   useEffect(()=>{ j('/api/universe').then(u=>setUniverse(u.map(x=>x.symbol))).catch(()=>{}); },[]);
   useEffect(()=>{ j('/api/portfolio').then(setAlloc).catch(()=>{}); },[]);
+  useEffect(()=>{ loadRebal(); },[]);
   useEffect(()=>{
     if (!holdings.length) { setQuotes({}); return; }
     let live = true;
@@ -935,6 +943,46 @@ function Portfolio(){
         )}
       </div>
 
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Tax-Aware Rebalancer</span><span className="note">last saved allocation → today's target book · HOLD inside tolerance · STCG/LTCG on realized gains</span>
+          <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={rebalLoading} onClick={loadRebal}>{rebalLoading ? 'Planning…' : '⟳ Recompute'}</button>
+        </div>
+        {!rebal ? <Loader/> : rebal.plan.n_prev === 0 ? (
+          <div className="note">No previous allocation snapshot yet — run a scan and the current book becomes the baseline; the next rebalance plan diffs against it.</div>
+        ) : (
+          <div>
+            <div style={{display:'flex',gap:24,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
+              <div className="stat"><span className={`stat-val ${rebal.plan.turnover_pct<=25?'acid':rebal.plan.turnover_pct<=60?'gold':'rose'}`}>{rebal.plan.turnover_pct}%</span><span className="stat-key">Turnover</span></div>
+              <div className="stat"><span className="stat-val rose">{fmtRs(rebal.plan.total_tax)}</span><span className="stat-key">Est. Tax ({rebal.plan.stcg_tax>0 ? 'STCG '+fmtRs(rebal.plan.stcg_tax)+' · ' : ''}{rebal.plan.ltcg_tax>0 ? 'LTCG '+fmtRs(rebal.plan.ltcg_tax)+' · ' : ''}realized gains)</span></div>
+              <div className="stat"><span className="stat-val">{fmtRs(rebal.plan.cost_est)}</span><span className="stat-key">Costs (0.5% RT)</span></div>
+              <div className="stat"><span className={`stat-val ${rebal.plan.total_drag_pct<=1.5?'acid':rebal.plan.total_drag_pct<=3.5?'gold':'rose'}`}>{rebal.plan.total_drag_pct}%</span><span className="stat-key">Total Drag (tax+cost)</span></div>
+              <div className="stat"><span className="stat-val">{rebal.plan.n_prev} → {rebal.plan.n_target}</span><span className="stat-key">Book size</span></div>
+            </div>
+            {rebal.prev_scan_date && <div className="note" style={{marginBottom:8}}>Baseline from {rebal.prev_scan_date}{rebal.prev_mode ? ' · mode '+rebal.prev_mode : ''} — estimated gains use real entry vs current price.</div>}
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Symbol</th><th>Action</th><th className="num">Prev %</th><th className="num">Target %</th><th className="num">Notional</th><th className="num">Est. Gain</th><th className="num">Est. Tax</th><th>Why</th></tr></thead>
+                <tbody>
+                  {rebal.plan.trades.map(t=>(
+                    <tr key={t.symbol}>
+                      <td style={{color:'var(--t0)',fontWeight:600}}>{t.symbol.replace('.NS','')}</td>
+                      <td><span className={`badge badge-${t.side==='SELL'?'WATCHLIST':t.side==='TRIM'?'EMERGING':t.side==='BUY'?'MULTIBAGGER':t.side==='ADD'?'STRONG':'ELITE'}`}>{t.side}</span></td>
+                      <td className="num">{t.prev_pct}%</td>
+                      <td className="num">{t.target_pct}%</td>
+                      <td className="num">{t.notional>0 ? fmtRs(t.notional) : '—'}</td>
+                      <td className={`num ${t.est_gain_pct!=null ? (t.est_gain_pct>=0?'up':'dn') : '—'}`}>{t.est_gain_pct!=null ? pct(t.est_gain_pct) : '—'}</td>
+                      <td className="num">{t.est_tax>0 ? fmtRs(t.est_tax)+(t.tax_kind ? ' '+t.tax_kind : '') : '—'}</td>
+                      <td style={{fontSize:10,color:'var(--t2)'}}>{t.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="note" style={{marginTop:8}}>Anti-churn by design: names still in top-N with drift under ±2% are HOLD — a winner is never sold just to be re-bought.</div>
+          </div>
+        )}
+      </div>
+
       <div className="grid3">
         <div className="card"><div className="stat"><span className="stat-val">{fmtRs(totMv)}</span><span className="stat-key">Market Value</span></div></div>
         <div className="card"><div className="stat"><span className={`stat-val ${totPnl>=0?'acid':'rose'}`}>{fmtRs(totPnl)} <span style={{fontSize:12}}>({pct(totPct)})</span></span><span className="stat-key">Total P&L</span></div></div>
@@ -1007,7 +1055,16 @@ function Backtest(){
   const [err,setErr] = useState(null);
 
   const [alphaData,setAlphaData] = useState(null);
-  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); j('/api/alpha').then(setAlphaData).catch(()=>{}); },[]);
+  const [bm,setBm] = useState(null);
+  const [bmBusy,setBmBusy] = useState(false);
+  const loadBm = ()=> j('/api/benchmarks').then(setBm).catch(()=>{});
+  const refreshBm = async ()=>{
+    setBmBusy(true);
+    try { await j('/api/benchmarks/refresh', {method:'POST'}); } catch {}
+    await loadBm();
+    setBmBusy(false);
+  };
+  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); j('/api/alpha').then(setAlphaData).catch(()=>{}); loadBm(); },[]);
 
   const run = async ()=>{
     setRunning(true); setErr(null); setResult(null);
@@ -1055,6 +1112,23 @@ function Backtest(){
         {result && result.warnings && result.warnings.length > 0 && <div className="note" style={{color:'var(--gold)',marginTop:10}}>{result.warnings.join(' · ')}</div>}
       </div>
 
+      {bm && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Index Benchmarks</span><span className="note">stored NIFTY 50 · Midcap 150 · Smallcap 250 — refreshed with every scan</span>
+            <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={bmBusy} onClick={refreshBm}>{bmBusy ? 'Fetching…' : '⟳ Refresh'}</button>
+          </div>
+          <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+            {Object.values(bm.coverage||{}).map(c=>(
+              <div key={c.symbol} className="stat">
+                <span className="stat-val" style={{fontSize:14}}>{c.rows>0 ? c.rows+' rows' : '—'}</span>
+                <span className="stat-key">{c.symbol} · {c.first_date ? c.first_date+' → '+c.last_date : 'not stored yet'}</span>
+              </div>
+            ))}
+            {!bm.coverage || Object.keys(bm.coverage).length===0 ? <div className="note">No index data stored — run a scan (or ⟳ Refresh) to seed Nifty 50 / Midcap 150 / Smallcap 250 history.</div> : null}
+          </div>
+        </div>
+      )}
+
       {result && s && !s.error && (
         <>
           <div className="grid3">
@@ -1092,6 +1166,30 @@ function Backtest(){
               </div>
             ) : <Empty icon="📈" text="Equity curve needs more history — run a scan with ≥2y of prices."/>}
           </div>
+
+          {result.benchmarks && result.benchmarks.length > 0 && (
+            <div className="card">
+              <div className="card-hdr"><span className="card-title">Alpha vs Indices</span><span className="note">buy-and-hold over the same window — the model must beat the market, not just its own universe</span></div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Benchmark</th><th className="num">Return</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Sortino</th><th className="num">Alpha</th></tr></thead>
+                  <tbody>
+                    {result.benchmarks.map(b=>(
+                      <tr key={b.name}>
+                        <td style={{color:'var(--t0)',fontWeight:600}}>{b.name}</td>
+                        <td className={`num ${b.return_pct>=0?'up':'dn'}`}>{pct(b.return_pct)}</td>
+                        <td className={`num ${b.cagr_pct>=0?'up':'dn'}`}>{pct(b.cagr_pct)}</td>
+                        <td className="num rose">{Number(b.max_drawdown_pct).toFixed(1)}%</td>
+                        <td className="num gold">{Number(b.sharpe).toFixed(2)}</td>
+                        <td className="num gold">{Number(b.sortino).toFixed(2)}</td>
+                        <td className={`num ${b.alpha_pct>=0?'acid':'rose'}`} style={{fontWeight:700}}>{pct(b.alpha_pct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="card">
             <div className="card-hdr"><span className="card-title">Trades ({result.trades.length})</span></div>

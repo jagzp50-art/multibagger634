@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — scan pipeline.
+Sovereign Lite v14 — scan pipeline.
 
     fetch prices → persist → fetch fundamentals (cached) → regime detection
     → score all symbols → rank → multibagger detect → persist scores
@@ -56,6 +56,14 @@ def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
             px_frames[sym] = df
     scoring.attach_indicators(px_frames)
 
+    # Keep the stored index benchmarks (NIFTY 50 / Midcap 150 / Smallcap 250)
+    # fresh so backtests always have point-in-time index data. Best-effort:
+    # a failed refresh is recorded, never fatal to the scan.
+    try:
+        data.refresh_benchmarks()
+    except Exception as exc:
+        print(f"  ⚠️ benchmark refresh failed: {exc}")
+
     nifty = data.fetch_benchmark("^NSEI")
     vix = data.fetch_benchmark("^INDIAVIX")
     nifty_adx = None
@@ -100,6 +108,22 @@ def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
     mb_records.sort(key=lambda r: r.get("mb_score") or 0, reverse=True)
     for i, r in enumerate(mb_records, start=1):
         r["mb_rank"] = i
+
+    # Persist the suggested Kelly-Lite allocation as the rebalance baseline.
+    # Every scan replaces the "previous book", so the next /api/rebalance plan
+    # diffs this book against the newer target (tax-aware, anti-churn).
+    try:
+        baseline = portfolio.build_allocation(
+            mb_records,
+            float((regime.get("allocation") or {}).get("equity", 60)),
+            top_n=8,
+            mode="kelly",
+            max_sector_weight=25.0,
+        )
+        db.save_allocation(baseline, mode="kelly")
+        print(f"[lite] allocation baseline: {len(baseline)} names")
+    except Exception as exc:
+        print(f"  ⚠️ allocation baseline failed: {exc}")
 
     # Score history: compare against the previous snapshot, then append this one.
     prev = db.latest_score_snapshot()

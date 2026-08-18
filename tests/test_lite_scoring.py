@@ -1137,7 +1137,7 @@ def test_health_reports_single_source_version(tmp_path, monkeypatch):
     app = api.create_app()
     routes = {r.path: r for r in app.routes if hasattr(r, "path")}
     body = routes["/api/health"].endpoint()
-    assert body["version"] == lite.VERSION == "13.0.0"
+    assert body["version"] == lite.VERSION == "14.0.0"
 
 
 def test_explain_endpoint_shape(tmp_path, monkeypatch):
@@ -1183,3 +1183,95 @@ def test_overview_endpoint_aggregates(tmp_path, monkeypatch):
     assert o["top_picks"][0]["symbol"] == "TRENT.NS"
     assert o["factor_ic"][0]["factor"] == "momentum"
     assert o["scored"] == 1
+
+
+# ── v14: Index benchmarks + tax-aware rebalancing ─────────────────────────
+
+def test_rebalance_plan_hold_sell_buy():
+    from lite import portfolio
+
+    prev = [
+        {"symbol": "A.NS", "weight_pct": 10.0},
+        {"symbol": "B.NS", "weight_pct": 8.0},
+        {"symbol": "C.NS", "weight_pct": 7.0},
+    ]
+    target = [
+        {"symbol": "A.NS", "weight_pct": 10.5},   # within ±2% tolerance → HOLD
+        {"symbol": "C.NS", "weight_pct": 12.0},   # conviction up → ADD
+        {"symbol": "D.NS", "weight_pct": 9.0},    # new → BUY
+    ]
+    plan = portfolio.rebalance_plan(target, prev, first_seen={"B.NS": "2025-01-01"}, price_pairs={"B.NS": (100.0, 140.0)})
+    by_sym = {t["symbol"]: t for t in plan["trades"]}
+    assert by_sym["A.NS"]["side"] == "HOLD"
+    assert by_sym["A.NS"]["notional"] == 0.0
+    assert by_sym["B.NS"]["side"] == "SELL"
+    assert by_sym["B.NS"]["est_gain_pct"] == pytest.approx(40.0)
+    assert by_sym["B.NS"]["est_tax"] > 0
+    assert by_sym["C.NS"]["side"] == "ADD"
+    assert by_sym["D.NS"]["side"] == "BUY"
+    assert plan["n_prev"] == 3 and plan["n_target"] == 3
+    assert plan["turnover_pct"] > 0 and plan["total_drag_pct"] > 0
+
+
+def test_rebalance_plan_stcg_vs_ltcg():
+    from lite import portfolio
+
+    prev = [{"symbol": "X.NS", "weight_pct": 20.0}]
+    target = []  # dropped entirely → full SELL
+    # Held < 1y → STCG at 30%; held > 1y → LTCG at 10%.
+    short = portfolio.rebalance_plan(target, prev, first_seen={"X.NS": "2026-07-01"}, price_pairs={"X.NS": (100.0, 200.0)})
+    long = portfolio.rebalance_plan(target, prev, first_seen={"X.NS": "2020-07-01"}, price_pairs={"X.NS": (100.0, 200.0)})
+    st = short["trades"][0]
+    lt = long["trades"][0]
+    assert st["tax_kind"] == "STCG" and lt["tax_kind"] == "LTCG"
+    # 20% weight on ₹10L = ₹2L notional · 100% gain → ₹2L gain
+    assert st["est_tax"] == pytest.approx(200_000 * 0.30, abs=1.0)
+    assert lt["est_tax"] == pytest.approx(200_000 * 0.10, abs=1.0)
+    assert short["stcg_tax"] > 0 and short["ltcg_tax"] == 0
+    assert long["ltcg_tax"] > 0 and long["stcg_tax"] == 0
+
+
+def test_benchmark_stats_shape():
+    import numpy as np
+    from lite import backtest
+
+    idx = pd.date_range("2023-01-02", periods=252, freq="B")
+    # Slight daily noise so downside days exist (sortino is defined).
+    noise = np.sin(np.arange(252) / 4.0) * 2.5
+    bench = pd.Series(np.linspace(100.0, 180.0, 252) + noise, index=idx)
+    curve = [{"date": d.strftime("%Y-%m-%d"), "equity": 1_000_000 * (1 + 0.3 * i / 251)} for i, d in enumerate(idx)]
+    bs = backtest._benchmark_stats(bench, curve, 1_000_000, "NIFTY 50")
+    assert bs["name"] == "NIFTY 50"
+    assert bs["return_pct"] == pytest.approx(80.0, abs=1.2)
+    assert bs["cagr_pct"] > 0 and bs["sharpe"] > 0 and bs["sortino"] > 0
+    assert -5.0 < bs["max_drawdown_pct"] <= 0.0  # small pullback in a rising trend
+    assert bs["alpha_pct"] == pytest.approx(30.0 - 80.0, abs=1.0)  # strat +30% vs +80%
+    assert len(bs["curve"]) == len(curve)
+
+
+def test_allocation_snapshot_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "rebal.db"))
+    db_mod.init_db()
+    assert db_mod.latest_allocation() is None
+    db_mod.save_allocation([{"symbol": "A.NS", "weight_pct": 30.0, "sector": "IT"}], mode="kelly")
+    snap = db_mod.latest_allocation()
+    assert snap["mode"] == "kelly" and snap["rows"][0]["symbol"] == "A.NS"
+    assert snap["rows"][0]["weight_pct"] == 30.0
+
+
+def test_benchmarks_and_rebalance_endpoints(tmp_path, monkeypatch):
+    import lite
+    from lite import api, db as db_mod
+
+    rec = _seed_explain_db(tmp_path, monkeypatch)
+    db_mod.save_allocation([{"symbol": "TRENT.NS", "weight_pct": 25.0, "sector": "Retail"}], mode="kelly")
+    app = api.create_app()
+    routes = {r.path: r for r in app.routes if hasattr(r, "path")}
+    bm = routes["/api/benchmarks"].endpoint()
+    assert "coverage" in bm and len(bm["definitions"]) == 3  # Nifty 50 / Midcap / Smallcap
+    rb = routes["/api/rebalance"].endpoint()
+    assert rb["plan"]["n_prev"] == 1
+    assert rb["plan"]["trades"][0]["side"] in ("HOLD", "ADD", "SELL")
+    assert "total_drag_pct" in rb["plan"]

@@ -1,5 +1,5 @@
 """
-Sovereign Lite v13 — one-click backtest (Phase 5).
+Sovereign Lite v14 — one-click backtest (Phase 5).
 
 A clean, lookahead-free momentum strategy over the stored price history:
 
@@ -68,7 +68,13 @@ def _cost_breakdown(total_pct: float) -> dict:
 def run_backtest(
     prices_by_symbol: dict[str, pd.DataFrame],
     params: dict | None = None,
+    benchmarks: dict[str, pd.Series] | None = None,
 ) -> dict:
+    """Backtest the momentum strategy. `benchmarks` is an optional
+    {label: close Series} map of stored index closes (NIFTY 50 / Midcap 150 /
+    Smallcap 250) — each gets buy-and-hold stats over the exact same window
+    plus alpha vs the strategy, so you can see whether the model actually
+    beats the market rather than just its own universe."""
     p = {**DEFAULT_PARAMS, **(params or {})}
     years = max(1, min(int(p.get("years", 3)), 10))
     top_n = max(1, int(p.get("top_n", 10)))
@@ -258,19 +264,78 @@ def run_backtest(
             }
         )
 
+    # Stored index benchmarks: buy-and-hold stats over the same window.
+    bench_list, bench_curves = [], {}
+    for label, series in (benchmarks or {}).items():
+        bs = _benchmark_stats(series, curve, initial, label)
+        if bs:
+            bench_list.append({k: v for k, v in bs.items() if k != "curve"})
+            bench_curves[label] = bs["curve"]
+
     return {
         "params": p,
         "equity_curve": curve,
         "universe_curve": universe_curve,
+        "benchmarks": bench_list,
+        "benchmark_curves": bench_curves,
         "trades": trades,
         "summary": summary,
         "warnings": warnings,
     }
 
 
+def _benchmark_stats(series: pd.Series, curve: list, initial: float, label: str) -> Optional[dict]:
+    """Buy-and-hold stats for one benchmark over the equity curve's window:
+    return / CAGR / max drawdown / Sharpe / Sortino + alpha vs the strategy.
+    Returns None when the stored series doesn't cover the window."""
+    if series is None or len(series) < 60 or not curve or initial <= 0:
+        return None
+    closes = series.dropna()
+    if len(closes) < 60 or float(closes.iloc[0]) <= 0:
+        return None
+    start, end = curve[0]["date"], curve[-1]["date"]
+    idx = pd.DatetimeIndex(pd.to_datetime(closes.index))
+    mask = (idx >= pd.Timestamp(start)) & (idx <= pd.Timestamp(end))
+    window = closes[mask]
+    if len(window) < 20:
+        return None
+    first = float(window.iloc[0])
+    last = float(window.iloc[-1])
+    if first <= 0:
+        return None
+    total_ret = last / first - 1
+    years = max(len(window) / 252, 1 / 252)
+    cagr = ((last / first) ** (1 / years) - 1) * 100
+    norm = window / first * initial
+    mdd = float(((norm - norm.cummax()) / norm.cummax()).min() * 100)
+    rets = window.pct_change().dropna()
+    sharpe = float(rets.mean() / rets.std() * math.sqrt(252)) if len(rets) > 2 and rets.std() > 0 else 0.0
+    downside = rets[rets < 0]
+    dstd = float(downside.std(ddof=0)) if len(downside) > 2 else 0.0
+    sortino = float(rets.mean() / dstd * math.sqrt(252)) if dstd > 0 else 0.0
+    by_date = {d.date().isoformat(): round(float(v), 2) for d, v in zip(idx[mask], norm)}
+    aligned, last_v = [], None
+    for pt in curve:
+        if pt["date"] in by_date:
+            last_v = by_date[pt["date"]]
+        if last_v is not None:
+            aligned.append({"date": pt["date"], "value": last_v})
+    strat_ret = curve[-1]["equity"] / initial - 1
+    return {
+        "name": label,
+        "return_pct": round(total_ret * 100, 2),
+        "cagr_pct": round(cagr, 2),
+        "max_drawdown_pct": round(mdd, 2),
+        "sharpe": round(sharpe, 2),
+        "sortino": round(sortino, 2),
+        "alpha_pct": round((strat_ret - total_ret) * 100, 2),
+        "curve": aligned,
+    }
+
 def walk_forward(
     prices_by_symbol: dict[str, pd.DataFrame],
     params: dict | None = None,
+    benchmarks: dict[str, pd.Series] | None = None,
 ) -> dict:
     """Walk-forward validation: run the exact same rule-based strategy on N
     consecutive 12-month test windows (each with a 12-month warmup before it).
@@ -278,6 +343,8 @@ def walk_forward(
     The strategy is parameter-free, so this measures how it performed across
     different regimes instead of one cherry-picked window — hit rate, average
     return and worst drawdown across folds flag overfit/regime dependence.
+    Stored index benchmarks flow into every fold so each window also reports
+    alpha vs the indices (does the edge persist across regimes?).
     """
     p = {**DEFAULT_PARAMS, **(params or {})}
     fold_months = max(6, min(int(p.get("fold_months", 12)), 24))
@@ -327,6 +394,7 @@ def walk_forward(
                 "trailing_stop_pct": stop,
                 "cost_pct": float(p.get("cost_pct", 0.25)),
             },
+            benchmarks=benchmarks,
         )
         sm = res.get("summary") or {}
         if sm.get("error"):
@@ -348,6 +416,7 @@ def walk_forward(
                 "sharpe": sm.get("sharpe"),
                 "win_rate_pct": sm.get("win_rate_pct"),
                 "trades": sm.get("trades"),
+                "benchmarks": res.get("benchmarks") or [],
             }
         )
 
