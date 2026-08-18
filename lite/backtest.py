@@ -1,5 +1,5 @@
 """
-Sovereign Lite v15 — one-click backtest (Phase 5).
+Sovereign Lite v16 — one-click backtest (Phase 5).
 
 A clean, lookahead-free momentum strategy over the stored price history:
 
@@ -15,11 +15,49 @@ from __future__ import annotations
 
 import math
 from datetime import date
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
 
 from . import db, indicators
+
+# Point-in-time loaders: `universe(date)` returns the symbols tracked in the
+# universe on/before that date (None = no snapshot covers it yet), and
+# `fundamentals(date)` returns the fundamentals known `reporting_lag_days`
+# before it. Backtests must go through these — never today's list or today's
+# ROE for a 2021 test.
+UniverseLoader = Callable[[str], Optional[set[str]]]
+FundasLoader = Callable[[str], dict[str, dict]]
+
+
+def pit_loaders(lag_days: int = 45) -> tuple[UniverseLoader, FundasLoader]:
+    """Build the point-in-time loaders backed by the stored history tables.
+
+    `universe(date)` → membership from the latest universe_history snapshot
+    on or before `date` (survivorship-bias-free), or None when no snapshot
+    covers it (early history falls back to the price-history guard).
+
+    `fundamentals(date)` → {symbol: row} as known `lag_days` before `date`,
+    read from fundamentals_history — the 45-day reporting-lag contract.
+    """
+    uhist = db.universe_membership_map()
+    dates = sorted(uhist)
+
+    def _universe(date_str: str) -> Optional[set[str]]:
+        best: Optional[str] = None
+        for d in dates:
+            if d <= date_str:
+                best = d
+            else:
+                break
+        return uhist.get(best) if best is not None else None
+
+    def _fundamentals(date_str: str) -> dict[str, dict]:
+        return db.fundamentals_asof_map(date_str, lag_days)
+
+    return _universe, _fundamentals
+
 
 DEFAULT_PARAMS = {
     "years": 3,
@@ -33,6 +71,12 @@ DEFAULT_PARAMS = {
     # lookahead bias. The current strategy is price-only (momentum + trend
     # template), so no lag is applied today — this documents the rule.
     "reporting_lag_days": 45,
+    # Optional point-in-time fundamental screen (both off by default → the
+    # strategy stays pure momentum). When set, candidates must clear the
+    # floor *as of the rebalance date minus the reporting lag* — a name with
+    # today's ROE but no 2021 fundamentals is never eligible in 2021.
+    "min_roe": None,
+    "min_sales_growth": None,
 }
 
 
@@ -69,12 +113,20 @@ def run_backtest(
     prices_by_symbol: dict[str, pd.DataFrame],
     params: dict | None = None,
     benchmarks: dict[str, pd.Series] | None = None,
+    universe: Optional[UniverseLoader] = None,
+    fundamentals: Optional[FundasLoader] = None,
 ) -> dict:
     """Backtest the momentum strategy. `benchmarks` is an optional
     {label: close Series} map of stored index closes (NIFTY 50 / Midcap 150 /
     Smallcap 250) — each gets buy-and-hold stats over the exact same window
     plus alpha vs the strategy, so you can see whether the model actually
-    beats the market rather than just its own universe."""
+    beats the market rather than just its own universe.
+
+    `universe` / `fundamentals` are the point-in-time loaders from
+    `pit_loaders()`: candidates are restricted to the tracked universe as of
+    each rebalance date (survivorship-bias-free), and optional fundamental
+    floors (`min_roe` / `min_sales_growth`) are applied to data as known at
+    the rebalance date minus `reporting_lag_days` — no lookahead."""
     p = {**DEFAULT_PARAMS, **(params or {})}
     years = max(1, min(int(p.get("years", 3)), 10))
     top_n = max(1, int(p.get("top_n", 10)))
@@ -83,6 +135,11 @@ def run_backtest(
     cost_pct = float(p.get("cost_pct", 0.25))
     cost_model = _cost_breakdown(cost_pct)
     cost = cost_model["total_per_side_pct"] / 100.0
+    f_floors: dict[str, float] = {}
+    if p.get("min_roe") is not None:
+        f_floors["roe"] = float(p["min_roe"])
+    if p.get("min_sales_growth") is not None:
+        f_floors["sales_growth"] = float(p["min_sales_growth"])
 
     # Align all series on a common trading calendar.
     frames = {}
@@ -131,6 +188,10 @@ def run_backtest(
     buy_notional = 0.0
     sell_notional = 0.0
     costs_total = 0.0
+    pit_excluded = 0  # names not in the tracked universe as of a rebalance date
+    pit_covered = 0  # rebalances with a universe snapshot on/before that date
+    fund_excluded = 0  # names failing the point-in-time fundamental screen
+    fund_unapplied_dates = 0  # rebalances where no PIT fundamentals existed yet
 
     for i in range(1, len(closes)):
         day = closes.index[i]
@@ -169,6 +230,13 @@ def run_backtest(
         # Rebalance at month end
         if day in rebalance_dates and day != rebalance_dates[0]:
             # Rank candidates by momentum + trend at this date (no lookahead)
+            day_iso = day.date().isoformat()
+            members = universe(day_iso) if universe else None
+            fmap = fundamentals(day_iso) if fundamentals else {}
+            if f_floors and not fmap:
+                fund_unapplied_dates += 1
+            if members is not None:
+                pit_covered += 1
             candidates = []
             for sym in closes.columns:
                 px = closes.loc[day, sym]
@@ -177,6 +245,21 @@ def run_backtest(
                 window = closes[sym].loc[:day]
                 if len(window) < 60:
                     continue
+                # Point-in-time universe: only names tracked in the universe on
+                # this date may be bought (a name can't trade in 2021 if the
+                # 2021 membership didn't include it).
+                if members is not None and sym not in members:
+                    pit_excluded += 1
+                    continue
+                # Optional point-in-time fundamental screen: data as known at
+                # date − reporting lag, never the latest stored values.
+                if f_floors:
+                    frow = fmap.get(sym)
+                    if frow is None or any(
+                        frow.get(k) is None or frow.get(k) < v for k, v in f_floors.items()
+                    ):
+                        fund_excluded += 1
+                        continue
                 ret6 = _ret(window, 126)
                 above200 = not (sma200.loc[day, sym] is None or pd.isna(sma200.loc[day, sym])) and px > sma200.loc[day, sym]
                 above50 = not (sma50.loc[day, sym] is None or pd.isna(sma50.loc[day, sym])) and px > sma50.loc[day, sym]
@@ -235,6 +318,26 @@ def run_backtest(
     summary["total_costs"] = round(costs_total, 2)
     summary["cost_drag_pct"] = round(costs_total / initial * 100, 2) if initial else 0.0
     summary["pit_snapshots_from"] = db.earliest_universe_snapshot()
+    summary["pit_universe"] = {
+        "excluded": pit_excluded,
+        "covered_rebalances": pit_covered,
+    }
+    summary["fundamental_screen"] = {
+        "floors": f_floors,
+        "excluded": fund_excluded,
+        "lag_days": int(p.get("reporting_lag_days", 45)),
+        "unapplied_dates": fund_unapplied_dates,
+    }
+    if f_floors and fund_unapplied_dates:
+        warnings.append(
+            f"Fundamental screen unapplied on {fund_unapplied_dates} rebalance(s) — "
+            f"no point-in-time fundamentals existed {int(p.get('reporting_lag_days', 45))}d before those dates yet."
+        )
+    if pit_excluded:
+        warnings.append(
+            f"Point-in-time universe excluded {pit_excluded} name-rebalance(s) not tracked as of their date "
+            "(survivorship-bias guard)."
+        )
 
     # Universe equal-weight benchmark: the average member of the candidate pool.
     # The model must beat its own universe, not just a stored index.
@@ -336,6 +439,8 @@ def walk_forward(
     prices_by_symbol: dict[str, pd.DataFrame],
     params: dict | None = None,
     benchmarks: dict[str, pd.Series] | None = None,
+    universe: Optional[UniverseLoader] = None,
+    fundamentals: Optional[FundasLoader] = None,
 ) -> dict:
     """Walk-forward validation: run the exact same rule-based strategy on N
     consecutive 12-month test windows (each with a 12-month warmup before it).
@@ -344,7 +449,9 @@ def walk_forward(
     different regimes instead of one cherry-picked window — hit rate, average
     return and worst drawdown across folds flag overfit/regime dependence.
     Stored index benchmarks flow into every fold so each window also reports
-    alpha vs the indices (does the edge persist across regimes?).
+    alpha vs the indices (does the edge persist across regimes?). Point-in-time
+    loaders (`universe` / `fundamentals`) flow into every fold unchanged, so
+    each window uses the membership and fundamentals known at its own dates.
     """
     p = {**DEFAULT_PARAMS, **(params or {})}
     fold_months = max(6, min(int(p.get("fold_months", 12)), 24))
@@ -393,8 +500,13 @@ def walk_forward(
                 "initial_capital": initial,
                 "trailing_stop_pct": stop,
                 "cost_pct": float(p.get("cost_pct", 0.25)),
+                "min_roe": p.get("min_roe"),
+                "min_sales_growth": p.get("min_sales_growth"),
+                "reporting_lag_days": int(p.get("reporting_lag_days", 45)),
             },
             benchmarks=benchmarks,
+            universe=universe,
+            fundamentals=fundamentals,
         )
         sm = res.get("summary") or {}
         if sm.get("error"):

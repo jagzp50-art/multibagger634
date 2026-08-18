@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v15</title>
+<title>Sovereign Lite v16</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -176,7 +176,7 @@ function Nav({tab,setTab,regime}){
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v15 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v16 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -757,6 +757,13 @@ function Research(){
   const regimes = rdata.regimes || [];
   const counts = rdata.snapshot_counts || {};
   const icColor = ic => ic >= 0.15 ? 'var(--acid)' : ic >= 0.05 ? 'var(--gold)' : 'var(--rose)';
+  const corrBg = v => {
+    if (v==null) return 'var(--bg0)';
+    const a = Math.abs(v);
+    if (v>=0) return a>=0.5 ? 'rgba(124,255,150,0.16)' : a>=0.25 ? 'rgba(124,255,150,0.08)' : 'var(--bg0)';
+    return a>=0.5 ? 'rgba(255,90,120,0.16)' : a>=0.25 ? 'rgba(255,90,120,0.08)' : 'var(--bg0)';
+  };
+  const corrTxt = v => v==null ? 'var(--t3)' : v>=0 ? 'var(--acid)' : 'var(--rose)';
   return (
     <div className="wrap anim">
       <div><div className="screen-title">Research</div><div className="screen-sub">Which factors actually predict returns · per regime</div></div>
@@ -819,6 +826,64 @@ function Research(){
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="grid2">
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Factor Correlation</span><span className="note">are any factors the same bet twice?</span></div>
+          {(() => {
+            const corr = fdata.correlation || {};
+            const m = corr.matrix || {};
+            const fs = corr.factors || [];
+            return fs.length < 2 ? <div className="note">No correlation matrix yet — builds from the latest factor snapshot (needs ~10 names with data).</div> : (
+              <div style={{overflowX:'auto'}}>
+                <table style={{minWidth:420}}>
+                  <thead><tr><th></th>{fs.map(f=><th key={f} style={{fontSize:9,textTransform:'capitalize',fontFamily:'var(--mono)'}}>{f.replace('_',' ')}</th>)}</tr></thead>
+                  <tbody>
+                    {fs.map(f1=>(
+                      <tr key={f1}>
+                        <td style={{fontSize:9,textTransform:'capitalize',fontFamily:'var(--mono)',color:'var(--t2)',whiteSpace:'nowrap'}}>{f1.replace('_',' ')}</td>
+                        {fs.map(f2=>{
+                          const v = (m[f1]||{})[f2];
+                          return <td key={f2} style={{background:corrBg(v),color:corrTxt(v),textAlign:'center',fontFamily:'var(--mono)',fontSize:10}}>{v!=null ? (v>=0?'+':'')+v.toFixed(2) : '—'}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {corr.top_pair && <div style={{fontSize:10,fontFamily:'var(--mono)',color:corrTxt(corr.top_pair.corr),marginTop:8}}>▲ most correlated: {corr.top_pair.a.replace('_',' ')} ⇄ {corr.top_pair.b.replace('_',' ')} {(corr.top_pair.corr>=0?'+':'')+corr.top_pair.corr.toFixed(2)}</div>}
+                {corr.avg_abs_corr!=null && <div style={{fontSize:9,color:'var(--t3)',marginTop:4}}>avg |corr| {corr.avg_abs_corr.toFixed(2)} · {corr.n_pairs} pairs</div>}
+              </div>
+            );
+          })()}
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Portfolio Crowding</span><span className="note">factor exposure of the current book vs the market</span></div>
+          {(() => {
+            const cw = fdata.crowding || {};
+            const expo = cw.exposure || {};
+            const keys = Object.keys(expo);
+            return keys.length === 0 ? <div className="note">No exposure yet — needs a saved allocation + a factor snapshot (run a scan).</div> : (
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {cw.concentrated && <div style={{background:'rgba(255,90,120,0.12)',border:'1px solid var(--rose)',color:'var(--rose)',fontSize:10,fontWeight:600,borderRadius:8,padding:'8px 10px'}}>⚠ Crowded: book is {cw.top.value}% in {cw.top.factor.replace('_',' ')} — a one-bet portfolio</div>}
+                {keys.map(f=>{
+                  const v = expo[f];
+                  return (
+                    <div key={f} style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{width:92,fontSize:10,color:'var(--t2)',textTransform:'capitalize',whiteSpace:'nowrap'}}>{f.replace('_',' ')}</span>
+                      <div style={{flex:1,height:8,background:'var(--bg0)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{width:Math.min(100,v)+'%',height:'100%',background:v>=60?'var(--rose)':v>=40?'var(--gold)':'var(--acid)',borderRadius:4}}/>
+                      </div>
+                      <span style={{fontFamily:'var(--mono)',fontSize:10,width:30,textAlign:'right'}}>{fmt(v,0)}</span>
+                    </div>
+                  );
+                })}
+                <div style={{fontSize:9,color:'var(--t3)',marginTop:4}}>percentile rank of the book's weighted factors vs the whole universe · ≥60 flags crowding</div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 

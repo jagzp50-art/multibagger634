@@ -1,5 +1,5 @@
 """
-Sovereign Lite v15 — alpha decay, factor IC, and regime-learned weights.
+Sovereign Lite v16 — alpha decay, factor IC, and regime-learned weights.
 
 After each scan we can measure whether the model actually works:
 
@@ -217,3 +217,118 @@ def learned_weights(base: dict[str, float], summary: dict, regime: Optional[str]
     if total > 0:
         w = {k: round(v / total, 4) for k, v in w.items()}
     return w
+
+
+# ── Factor correlation + portfolio crowding ────────────────────────────────
+
+# Factors kept in the correlation/crowding surface (score/data_confidence are
+# composites, not independent bets).
+CORR_FACTORS = [
+    "quality",
+    "growth",
+    "momentum",
+    "valuation",
+    "risk",
+    "revision_score",
+    "rs_rank",
+    "mb_score",
+    "opp_score",
+]
+
+
+def factor_correlation_matrix(snapshot: dict[str, dict[str, float]]) -> dict:
+    """Pairwise Spearman correlation between factors in the latest snapshot.
+
+    Answers the double-counting question — if momentum and rs_rank sit at 0.9,
+    the model is betting the same thing twice. Returns the matrix, the most
+    correlated pair, and the average |correlation| as a crowding proxy.
+    """
+    factors = [
+        f for f in CORR_FACTORS if any(s.get(f) is not None for s in snapshot.values())
+    ]
+    matrix: dict[str, dict[str, float | None]] = {}
+    for f1 in factors:
+        matrix[f1] = {}
+        for f2 in factors:
+            if f1 == f2:
+                matrix[f1][f2] = 1.0
+                continue
+            pairs = [
+                (s[f1], s[f2])
+                for s in snapshot.values()
+                if s.get(f1) is not None and s.get(f2) is not None
+            ]
+            if len(pairs) < 10:
+                matrix[f1][f2] = None
+                continue
+            matrix[f1][f2] = round(
+                _spearman([p[0] for p in pairs], [p[1] for p in pairs]) or 0.0, 3
+            )
+    pairs_list = []
+    for i, f1 in enumerate(factors):
+        for f2 in factors[i + 1 :]:
+            v = matrix[f1][f2]
+            if v is not None:
+                pairs_list.append((f1, f2, v))
+    pairs_list.sort(key=lambda t: abs(t[2]), reverse=True)
+    top = pairs_list[0] if pairs_list else None
+    avg_abs = (
+        round(sum(abs(p[2]) for p in pairs_list) / len(pairs_list), 3)
+        if pairs_list
+        else None
+    )
+    return {
+        "factors": factors,
+        "matrix": matrix,
+        "top_pair": {"a": top[0], "b": top[1], "corr": top[2]} if top else None,
+        "avg_abs_corr": avg_abs,
+        "n_pairs": len(pairs_list),
+    }
+
+
+def portfolio_factor_exposure(
+    weights: dict[str, float], snapshot: dict[str, dict[str, float]]
+) -> dict:
+    """Weighted percentile-rank exposure of the current book per factor.
+
+    Each factor value is ranked 0–100 against the whole universe, then averaged
+    with the portfolio weights — an exposure of 75 in momentum means the book
+    sits at the 75th percentile of momentum vs the market. A factor at/above
+    `concentration_threshold` flags crowding (the model has become a one-bet
+    portfolio).
+    """
+    # Rank every name in the snapshot against the whole universe first — the
+    # book's exposure is its weighted percentile *vs the market*, not a rank
+    # within its own 5–20 names (which would always average ~50–60%).
+    universe_vals: dict[str, list[tuple[str, float]]] = {}
+    for sym, factors in snapshot.items():
+        for f in CORR_FACTORS:
+            v = factors.get(f)
+            if v is not None:
+                universe_vals.setdefault(f, []).append((sym, v))
+    exposure: dict[str, float] = {}
+    for f in CORR_FACTORS:
+        uv = universe_vals.get(f)
+        if not uv or len(uv) < 5:
+            continue
+        ranks = _ranks([v for _, v in uv])  # 1..n average ranks over the universe
+        rank_of = {sym: r for (sym, _), r in zip(uv, ranks)}
+        book = [(sym, w) for sym, w in weights.items() if sym in rank_of]
+        if len(book) < 5:
+            continue
+        w = sum(wt for _, wt in book)
+        if w <= 0:
+            continue
+        n = len(uv)
+        exposure[f] = round(
+            sum(wt * (rank_of[sym] / n) for sym, wt in book) / w * 100.0, 1
+        )
+    if not exposure:
+        return {"exposure": {}, "concentrated": False, "top": None}
+    top = max(exposure.items(), key=lambda kv: kv[1])
+    return {
+        "exposure": exposure,
+        "concentrated": top[1] >= 60.0,
+        "top": {"factor": top[0], "value": top[1]},
+        "concentration_threshold": 60.0,
+    }

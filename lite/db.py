@@ -1,5 +1,5 @@
 """
-Sovereign Lite v15 — SQLite data layer.
+Sovereign Lite v16 — SQLite data layer.
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any, Iterable, Optional
 
 DB_PATH = "lite.db"
@@ -1391,6 +1391,71 @@ def fundamentals_history_for(symbol: str, limit: int = 20) -> list[dict]:
             (symbol, limit),
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
+
+def universe_membership_map() -> dict[str, set[str]]:
+    """All universe-history snapshots: {snapshot_date: {symbol, ...}}.
+
+    Backtests use the latest snapshot on or before each rebalance date as the
+    point-in-time membership — a name can only be bought once it was actually
+    in the tracked universe. This is the survivorship-bias fix: today's
+    curated list is never projected backwards.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT snapshot_date, symbol FROM universe_history ORDER BY snapshot_date"
+        ).fetchall()
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(r["snapshot_date"], set()).add(r["symbol"])
+        return out
+    finally:
+        conn.close()
+
+
+def fundamentals_asof_map(as_of_date: str, lag_days: int = 45) -> dict[str, dict]:
+    """Point-in-time fundamentals as they were known `lag_days` before
+    `as_of_date`.
+
+    For each symbol, the fundamentals row from the most recent snapshot on or
+    before `as_of_date - lag_days`. Any fundamental-based backtest rule must go
+    through this so it can never use today's ROE for a 2021 test (the 45-day
+    reporting lag is the anti-lookahead contract).
+    """
+    conn = get_connection()
+    try:
+        d = date.fromisoformat(as_of_date)
+        cutoff = (d - timedelta(days=lag_days)).isoformat()
+        rows = conn.execute(
+            "SELECT fh.* FROM fundamentals_history fh JOIN ("
+            "  SELECT symbol, MAX(scan_date) AS sd FROM fundamentals_history"
+            "  WHERE scan_date <= ? GROUP BY symbol"
+            ") m ON fh.symbol = m.symbol AND fh.scan_date = m.sd",
+            (cutoff,),
+        ).fetchall()
+        return {r["symbol"]: dict(r) for r in rows}
+    finally:
+        conn.close()
+
+
+def latest_factor_snapshot() -> dict[str, dict[str, float]]:
+    """Pivot of the newest factor_scores scan: {symbol: {factor: value}}."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT MAX(scan_date) AS d FROM factor_scores").fetchone()
+        if not row or not row["d"]:
+            return {}
+        rows = conn.execute(
+            "SELECT symbol, factor, value FROM factor_scores WHERE scan_date = ?",
+            (row["d"],),
+        ).fetchall()
+        out: dict[str, dict[str, float]] = {}
+        for r in rows:
+            out.setdefault(r["symbol"], {})[r["factor"]] = r["value"]
+        return out
     finally:
         conn.close()
 

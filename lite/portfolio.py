@@ -1,5 +1,5 @@
 """
-Sovereign Lite v15 — portfolio construction layer.
+Sovereign Lite v16 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
 (higher = better). Allocation weights are conviction-based: the #1 position

@@ -1137,7 +1137,7 @@ def test_health_reports_single_source_version(tmp_path, monkeypatch):
     app = api.create_app()
     routes = {r.path: r for r in app.routes if hasattr(r, "path")}
     body = routes["/api/health"].endpoint()
-    assert body["version"] == lite.VERSION == "15.0.0"
+    assert body["version"] == lite.VERSION == "16.0.0"
 
 
 def test_explain_endpoint_shape(tmp_path, monkeypatch):
@@ -1447,3 +1447,178 @@ def test_v15_endpoints(tmp_path, monkeypatch):
     pf = routes["/api/portfolio"].endpoint()
     assert "cash_plan" in pf and "sector_budgets" in pf
     assert pf["sector_budgets"]["Retail"] == 20.0
+
+# ── v16: Point-in-time backtests + factor correlation / crowding ───────────
+
+def test_pit_universe_loader_uses_latest_snapshot_on_or_before(tmp_path, monkeypatch):
+    from lite import backtest
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "pit_uni.db"))
+    db_mod.init_db()
+    db_mod.add_stock("A.NS", tier="core")
+    db_mod.add_stock("B.NS", tier="core")
+    db_mod.snapshot_universe("2022-06-30")
+    # B is dropped from the tracked universe in a later snapshot (simulates a
+    # delisted / replaced name from an earlier scan).
+    conn = db_mod.get_connection()
+    conn.execute("INSERT OR REPLACE INTO universe_history (snapshot_date, symbol, name, sector) VALUES ('2022-06-30', 'GONE.NS', 'Gone Ltd', 'Old')")
+    conn.commit()
+    conn.close()
+    db_mod.snapshot_universe("2022-12-31")
+
+    uni, _ = backtest.pit_loaders()
+    # Latest snapshot on or before the date is used...
+    assert uni("2022-08-01") == {"A.NS", "B.NS", "GONE.NS"}
+    assert uni("2023-01-15") == {"A.NS", "B.NS"}
+    # ...and history before any snapshot is not silently backfilled.
+    assert uni("2020-05-05") is None
+
+
+def test_fundamentals_asof_lag_blocks_lookahead(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "pit_fund.db"))
+    db_mod.init_db()
+    db_mod.upsert_fundamentals({"symbol": "F.NS", "roe": 20.0, "sales_growth": 15.0})
+    db_mod.snapshot_fundamentals_history("2025-01-15")
+    db_mod.upsert_fundamentals({"symbol": "F.NS", "roe": 30.0, "sales_growth": 22.0})
+    db_mod.snapshot_fundamentals_history("2025-03-15")
+
+    # 45-day lag: a date too close to the first snapshot sees nothing.
+    assert db_mod.fundamentals_asof_map("2025-02-28", 45) == {}
+    # The first snapshot becomes visible only after cutoff = date - 45d.
+    row = db_mod.fundamentals_asof_map("2025-03-10", 45).get("F.NS")
+    assert row and row["roe"] == 20.0 and row["sales_growth"] == 15.0
+    # Later dates see the most recent known values — still never the future.
+    row = db_mod.fundamentals_asof_map("2025-05-01", 45).get("F.NS")
+    assert row and row["roe"] == 30.0
+
+
+def test_backtest_pit_universe_and_fundamental_screen(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from lite import backtest
+    import lite.db as db_mod
+    from lite.backtest import pit_loaders
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "pit_bt.db"))
+    db_mod.init_db()
+    idx = pd.date_range("2022-01-01", periods=700, freq="B")
+    n = len(idx)
+    a = pd.Series([100 * (1.0009 ** i) for i in range(n)], index=idx)
+    b = pd.Series([100 * (1.0011 ** i) for i in range(n)], index=idx)
+    prices = {"IN.NS": pd.DataFrame({"close": a}), "OUT.NS": pd.DataFrame({"close": b})}
+
+    # ── universe membership ──
+    db_mod.add_stock("IN.NS", tier="core")
+    db_mod.snapshot_universe("2022-01-15")
+    uni, _ = pit_loaders()
+    res = backtest.run_backtest(prices, {"years": 2, "top_n": 2}, universe=uni)
+    s = res["summary"]
+    assert s["pit_universe"]["excluded"] > 0
+    assert s["pit_universe"]["covered_rebalances"] > 0
+    assert all(t["symbol"] == "IN.NS" for t in res["trades"])
+
+    # ── fundamental screen (45-day lag honored) ──
+    db_mod.upsert_fundamentals({"symbol": "IN.NS", "roe": 25.0, "sales_growth": 18.0})
+    db_mod.upsert_fundamentals({"symbol": "OUT.NS", "roe": 5.0, "sales_growth": 2.0})
+    db_mod.snapshot_fundamentals_history("2022-01-15")
+    _, fundas = pit_loaders()
+    res2 = backtest.run_backtest(
+        prices, {"years": 2, "top_n": 2, "min_roe": 15.0}, fundamentals=fundas
+    )
+    s2 = res2["summary"]
+    assert s2["fundamental_screen"]["floors"] == {"roe": 15.0}
+    assert s2["fundamental_screen"]["lag_days"] == 45
+    assert s2["fundamental_screen"]["excluded"] > 0
+    assert s2["fundamental_screen"]["unapplied_dates"] == 0
+    assert all(t["symbol"] == "IN.NS" for t in res2["trades"])
+
+
+def _seed_factor_snapshot(tmp_path, monkeypatch, names=12):
+    import random
+
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "corr.db"))
+    db_mod.init_db()
+    rng = random.Random(42)
+    for i in range(names):
+        sym = f"S{i:02d}.NS"
+        rs = round(i * 100 / (names - 1), 2)
+        mom = round(min(100, max(0, rs + rng.uniform(-2, 2))), 2)
+        qual = round(min(100, max(0, rs * 0.5 + rng.uniform(0, 50))), 2)
+        db_mod.save_factor_scores(sym, "2026-08-01", {
+            "quality": qual,
+            "growth": round(rng.uniform(10, 95), 2),
+            "momentum": mom,
+            "valuation": round(rng.uniform(5, 90), 2),
+            "risk": round(rng.uniform(10, 90), 2),
+            "revision_score": round(rng.uniform(5, 95), 2),
+            "rs_rank": rs,
+            "mb_score": round(rng.uniform(5, 90), 2),
+            "opp_score": round(rng.uniform(5, 95), 2),
+        })
+    return db_mod
+
+
+def test_factor_correlation_matrix_detects_double_counting(tmp_path, monkeypatch):
+    from lite import alpha
+
+    db_mod = _seed_factor_snapshot(tmp_path, monkeypatch)
+    snap = db_mod.latest_factor_snapshot()
+    assert len(snap) == 12
+    corr = alpha.factor_correlation_matrix(snap)
+    assert corr["n_pairs"] == 36  # C(9,2)
+    assert set(corr["factors"]) == {
+        "quality", "growth", "momentum", "valuation", "risk",
+        "revision_score", "rs_rank", "mb_score", "opp_score",
+    }
+    # Diagonal is exactly 1.0
+    for f in corr["factors"]:
+        assert corr["matrix"][f][f] == 1.0
+    # momentum ⇄ rs_rank were built correlated → flagged as the top pair
+    tp = corr["top_pair"]
+    assert {tp["a"], tp["b"]} == {"momentum", "rs_rank"}
+    assert tp["corr"] >= 0.9
+    assert corr["avg_abs_corr"] is not None
+
+
+def test_portfolio_factor_exposure_crowding_flag(tmp_path, monkeypatch):
+    from lite import alpha
+
+    db_mod = _seed_factor_snapshot(tmp_path, monkeypatch)
+    snap = db_mod.latest_factor_snapshot()
+    weights = {f"S{i:02d}.NS": 0.2 for i in range(7, 12)}  # top-5 by rs_rank
+    expo = alpha.portfolio_factor_exposure(weights, snap)
+    assert expo["exposure"]
+    assert "concentrated" in expo and "top" in expo
+    assert expo["top"]["factor"] in expo["exposure"]
+    # A book made of the 4 highest-rs_rank names must sit in the upper
+    # percentile of the trend factors and trip the crowding flag.
+    assert expo["exposure"]["rs_rank"] > 60.0
+    assert expo["concentrated"] is True
+    assert expo["concentration_threshold"] == 60.0
+
+
+def test_v16_research_endpoint_correlation_crowding(tmp_path, monkeypatch):
+    from lite import api
+
+    db_mod = _seed_factor_snapshot(tmp_path, monkeypatch)
+    db_mod.save_allocation(
+        [{"symbol": f"S{i:02d}.NS", "weight_pct": 1.0 / 6, "sector": "Tech"} for i in range(8, 12)]
+        + [{"symbol": "S00.NS", "weight_pct": 0.0, "sector": "Tech"}]
+    )
+    app = api.create_app()
+    routes = {}
+    for r in app.routes:
+        if hasattr(r, "path") and hasattr(r, "methods"):
+            if any(m.lower() == "get" for m in r.methods) and r.path not in routes:
+                routes[r.path] = r
+    out = routes["/api/research/factors"].endpoint()
+    assert "correlation" in out and "crowding" in out
+    assert out["correlation"]["n_pairs"] == 36
+    assert out["crowding"]["exposure"]
+    assert out["crowding"]["top"]["factor"] in out["crowding"]["exposure"]
+    assert out["crowding"]["concentrated"] is True

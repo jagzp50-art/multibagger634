@@ -1,5 +1,5 @@
 """
-Sovereign Lite v15 — FastAPI application.
+Sovereign Lite v16 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -297,10 +297,36 @@ def create_app() -> FastAPI:
             key=lambda kv: kv[1].get("avg_ic") or 0,
             reverse=True,
         )
+        # Factor correlation (double-counting check) + portfolio crowding from
+        # the latest long-format factor snapshot.
+        snap = db.latest_factor_snapshot()
+        correlation = alpha.factor_correlation_matrix(snap) if snap else {
+            "factors": [],
+            "matrix": {},
+            "top_pair": None,
+            "avg_abs_corr": None,
+            "n_pairs": 0,
+        }
+        alloc = db.latest_allocation()
+        alloc_rows = (alloc or {}).get("rows") or []
+        crowding = (
+            {"exposure": {}, "concentrated": False, "top": None}
+            if not alloc_rows
+            else alpha.portfolio_factor_exposure(
+                {
+                    a["symbol"]: float(a["weight_pct"])
+                    for a in alloc_rows
+                    if a.get("symbol")
+                },
+                snap,
+            )
+        )
         return _json_safe(
             {
                 "factors": [{"factor": k, **v} for k, v in factors],
                 "alpha_decay": db.load_alpha_rows(limit_horizons=5),
+                "correlation": correlation,
+                "crowding": crowding,
                 "updated": ic.get("updated"),
             }
         )
@@ -506,7 +532,10 @@ def create_app() -> FastAPI:
             if rows:
                 frames[sym] = indicators.to_dataframe(rows)
         stored = _stored_benchmarks()
-        result = bt.run_backtest(frames, params or {}, benchmarks=stored)
+        uni, fundas = bt.pit_loaders(int((params or {}).get("reporting_lag_days", 45)))
+        result = bt.run_backtest(
+            frames, params or {}, benchmarks=stored, universe=uni, fundamentals=fundas
+        )
         if not result.get("trades") and not result.get("equity_curve"):
             raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
         # Back-compat summary fields (chart + stat cards read these): pull the
@@ -543,7 +572,14 @@ def create_app() -> FastAPI:
             rows = db.load_prices(sym)
             if rows:
                 frames[sym] = indicators.to_dataframe(rows)
-        result = bt.walk_forward(frames, params or {}, benchmarks=_stored_benchmarks())
+        uni, fundas = bt.pit_loaders(int((params or {}).get("reporting_lag_days", 45)))
+        result = bt.walk_forward(
+            frames,
+            params or {},
+            benchmarks=_stored_benchmarks(),
+            universe=uni,
+            fundamentals=fundas,
+        )
         if not result.get("folds"):
             raise HTTPException(status_code=422, detail=result["summary"].get("error", "No data"))
         return _json_safe(result)
@@ -608,7 +644,7 @@ def create_app() -> FastAPI:
             }
         )
 
-    # ── v15: sector budgets / rebalance runs / revisions / delivery / events ─
+    # ── v16: sector budgets / rebalance runs / revisions / delivery / events ─
 
     @app.get("/api/sector-budgets")
     def sector_budgets_get():
