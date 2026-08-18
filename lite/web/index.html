@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v17</title>
+<title>Sovereign Research Terminal</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -11,76 +11,108 @@
 <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Geist+Mono:wght@300;400;500;600&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
 :root{
-  --bg0:#04060d;--bg1:#080c17;--bg2:#0c1120;--bg3:#111928;--bg4:#161f30;
-  --wire:rgba(255,255,255,.055);--wire2:rgba(255,255,255,.10);--wire3:rgba(255,255,255,.18);
-  --t0:#ffffff;--t1:#c9d4f0;--t2:#6d7fa8;--t3:#3a445e;
-  --acid:#00ffa3;--acid-d:rgba(0,255,163,.10);--acid-g:0 0 20px rgba(0,255,163,.22);
-  --rose:#ff3060;--rose-d:rgba(255,48,96,.10);
-  --gold:#ffb700;--gold-d:rgba(255,183,0,.10);
-  --sky:#3d9eff;--sky-d:rgba(61,158,255,.10);
-  --mono:'Geist Mono',monospace;--sans:'Geist',sans-serif;--display:'Syne',sans-serif;
+  --bg0:#f4f6fb;--bg1:#ffffff;--bg2:#f8f9fc;--bg3:#eef0f5;--bg4:#e2e5ed;
+  --wire:rgba(0,0,0,.08);--wire2:rgba(0,0,0,.12);--wire3:rgba(0,0,0,.18);
+  --t0:#111827;--t1:#1f2937;--t2:#6b7280;--t3:#9ca3af;
+  --acid:#16a34a;--acid-d:rgba(22,163,74,.08);--acid-g:0 0 12px rgba(22,163,74,.15);
+  --rose:#dc2626;--rose-d:rgba(220,38,38,.08);
+  --gold:#d97706;--gold-d:rgba(217,119,6,.08);
+  --sky:#2563eb;--sky-d:rgba(37,99,235,.08);
+  --purple:#7c3aed;--purple-d:rgba(124,58,237,.08);
+  --sidebar-bg:#0f172a;--sidebar-t1:#e2e8f0;--sidebar-t2:#94a3b8;--sidebar-t3:#64748b;--sidebar-wire:rgba(255,255,255,.08);
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,-apple-system,sans-serif;
+  --card-radius:12px;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{background:var(--bg0);color:var(--t1);font-family:var(--sans);font-size:13px}
-body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:repeating-linear-gradient(0deg,transparent 0,transparent 1px,rgba(255,255,255,.010) 1px,rgba(255,255,255,.010) 2px);background-size:100% 2px;opacity:.6}
-body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:radial-gradient(ellipse 60% 30% at 5% 0%,rgba(0,255,163,.03) 0%,transparent 70%),
-             radial-gradient(ellipse 40% 40% at 95% 5%,rgba(61,158,255,.04) 0%,transparent 70%)}
-#root{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh}
+body{background:var(--bg0);color:var(--t1);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+#root{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 
-.nav{display:flex;align-items:center;padding:0 24px;height:52px;background:rgba(4,6,13,.94);backdrop-filter:blur(24px);border-bottom:1px solid var(--wire);flex-shrink:0}
-.nav-brand{display:flex;align-items:center;gap:10px;padding-right:16px;margin-right:8px;border-right:1px solid var(--wire);flex-shrink:0}
-.nav-sigma{width:28px;height:28px;border-radius:7px;background:conic-gradient(from 135deg,var(--acid),var(--sky),var(--acid));display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:800;font-size:13px;color:var(--bg0)}
-.nav-wordmark{font-family:var(--display);font-size:14px;font-weight:800;letter-spacing:2px;color:var(--t0)}
-.nav-sub{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;text-transform:uppercase}
-.nav-tabs{display:flex;gap:1px;flex:1;padding:0 12px;overflow-x:auto}
-.nav-tab{padding:0 14px;height:52px;display:flex;align-items:center;font-family:var(--mono);font-size:10px;font-weight:500;color:var(--t3);border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;cursor:pointer;background:none;border-top:none;border-left:none;border-right:none}
-.nav-tab:hover{color:var(--t1);border-bottom-color:var(--wire2)}
-.nav-tab.active{color:var(--acid);border-bottom-color:var(--acid)}
-.nav-right{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid var(--wire);flex-shrink:0;font-family:var(--mono);font-size:9px;color:var(--t2)}
-.regime-chip{font-family:var(--mono);font-size:9px;font-weight:600;padding:3px 9px;border-radius:4px}
-.regime-BULL{background:var(--acid-d);color:var(--acid)}
-.regime-BEAR{background:var(--rose-d);color:var(--rose)}
-.regime-SIDEWAYS{background:var(--gold-d);color:var(--gold)}
-.regime-HIGH_VOLATILITY{background:var(--rose-d);color:var(--rose)}
-.vix-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:var(--bg2);border:1px solid var(--wire);font-family:var(--mono);font-size:10px}
-.vix-dot{width:5px;height:5px;border-radius:50%}
-.vix-dot.safe{background:var(--acid);box-shadow:0 0 6px var(--acid)}
-.vix-dot.warn{background:var(--gold);box-shadow:0 0 6px var(--gold)}
-.vix-dot.risk{background:var(--rose);box-shadow:0 0 6px var(--rose)}
+/* ── TOP NAV ── */
+.topnav{display:flex;align-items:center;padding:0 20px;height:52px;background:#ffffff;border-bottom:1px solid var(--wire);flex-shrink:0;z-index:10}
+.topnav-brand{display:flex;align-items:center;gap:10px;padding-right:16px;margin-right:8px;border-right:1px solid var(--wire);flex-shrink:0}
+.topnav-sigma{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#2563eb);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:#fff}
+.topnav-wordmark{font-weight:800;font-size:14px;letter-spacing:1.5px;color:var(--t0)}
+.topnav-sub{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;text-transform:uppercase}
+.topnav-tabs{display:flex;gap:2px;flex:1;padding:0 8px;overflow-x:auto}
+.topnav-tab{padding:0 14px;height:52px;display:flex;align-items:center;font-family:var(--mono);font-size:10px;font-weight:500;color:var(--t2);border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;cursor:pointer;background:none;border-top:none;border-left:none;border-right:none}
+.topnav-tab:hover{color:var(--t0);border-bottom-color:var(--wire2)}
+.topnav-tab.active{color:var(--purple);border-bottom-color:var(--purple);font-weight:600}
+.topnav-right{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid var(--wire);flex-shrink:0;font-family:var(--mono);font-size:9px;color:var(--t2)}
 
-.body{flex:1;overflow-y:auto;padding:20px 24px}
-.wrap{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
-.screen-title{font-family:var(--display);font-size:22px;font-weight:800;color:var(--t0);letter-spacing:.3px}
-.screen-sub{font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:1px}
+/* ── TICKER STRIP ── */
+.ticker-strip{display:flex;gap:0;overflow-x:auto;background:#ffffff;border-bottom:1px solid var(--wire);flex-shrink:0;height:40px;scrollbar-width:none}
+.ticker-strip::-webkit-scrollbar{display:none}
+.ticker-item{display:flex;align-items:center;gap:8px;padding:0 16px;border-right:1px solid var(--wire);white-space:nowrap;cursor:pointer;transition:background .15s}
+.ticker-item:hover{background:var(--bg2)}
+.ticker-sym{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--t0)}
+.ticker-price{font-family:var(--mono);font-size:11px;color:var(--t1)}
+.ticker-chg{font-family:var(--mono);font-size:10px;font-weight:600}
+.ticker-chg.up{color:var(--acid)}.ticker-chg.dn{color:var(--rose)}
 
-.card{background:var(--bg2);border:1px solid var(--wire);border-radius:12px;padding:16px;overflow:hidden}
+/* ── MAIN LAYOUT ── */
+.main-layout{display:flex;flex:1;overflow:hidden}
+
+/* ── SIDEBAR ── */
+.sidebar{width:220px;min-width:220px;background:var(--sidebar-bg);border-right:1px solid var(--sidebar-wire);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.sidebar-section{padding:14px 14px 10px;border-bottom:1px solid var(--sidebar-wire)}
+.sidebar-label{font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:1.2px;color:var(--sidebar-t3);text-transform:uppercase;margin-bottom:8px}
+.sidebar-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;transition:all .15s;font-size:12px;color:var(--sidebar-t2);margin-bottom:2px}
+.sidebar-item:hover{background:rgba(255,255,255,.06);color:var(--sidebar-t1)}
+.sidebar-item.active{background:rgba(124,58,237,.18);color:#a78bfa;font-weight:600}
+.sidebar-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sidebar-dot.green{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.5)}
+.sidebar-dot.red{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.5)}
+.sidebar-dot.amber{background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,.5)}
+.sidebar-dot.blue{background:#3b82f6;box-shadow:0 0 6px rgba(59,130,246,.5)}
+.sidebar-regime-badge{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-family:var(--mono);font-size:11px;font-weight:700;margin-top:4px}
+.sidebar-regime-badge.BULL{background:rgba(34,197,94,.15);color:#22c55e}
+.sidebar-regime-badge.BEAR{background:rgba(239,68,68,.15);color:#ef4444}
+.sidebar-regime-badge.SIDEWAYS{background:rgba(245,158,11,.15);color:#f59e0b}
+.sidebar-regime-badge.HIGH_VOLATILITY{background:rgba(239,68,68,.15);color:#ef4444}
+.sidebar-exec{padding:10px 14px;border-bottom:1px solid var(--sidebar-wire)}
+.sidebar-exec select{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--sidebar-wire);color:var(--sidebar-t1);border-radius:6px;font-family:var(--mono);font-size:10px;padding:6px 8px;margin-bottom:6px;outline:none}
+.sidebar-exec select:focus{border-color:rgba(124,58,237,.5)}
+.sidebar-range{padding:10px 14px}
+.sidebar-range label{font-family:var(--mono);font-size:8px;color:var(--sidebar-t3);display:block;margin-bottom:4px}
+.sidebar-range input[type=range]{width:100%;accent-color:#7c3aed}
+.sidebar-range-val{font-family:var(--mono);font-size:10px;color:var(--sidebar-t2);display:flex;justify-content:space-between}
+
+/* ── CONTENT AREA ── */
+.content{flex:1;overflow-y:auto;padding:0}
+.content-scroll{padding:20px 24px;max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+/* ── CARDS (light theme) ── */
+.card{background:#ffffff;border:1px solid var(--wire);border-radius:var(--card-radius);padding:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .card-title{font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--t2);display:flex;align-items:center;gap:8px}
-.card-title::before{content:'';width:10px;height:1px;background:var(--acid)}
+.card-title::before{content:'';width:10px;height:1px;background:var(--purple)}
+
+.screen-title{font-family:var(--sans);font-size:22px;font-weight:800;color:var(--t0);letter-spacing:.3px}
+.screen-sub{font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:1px}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+@media(max-width:1100px){.grid4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:900px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
 
 table{width:100%;border-collapse:collapse;font-size:11px}
 th{font-family:var(--mono);font-size:8px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--wire);white-space:nowrap}
-td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);color:var(--t1);white-space:nowrap}
-tr:hover td{background:rgba(255,255,255,.015)}
+td{padding:9px 10px;border-bottom:1px solid rgba(0,0,0,.04);color:var(--t1);white-space:nowrap}
+tr:hover td{background:rgba(0,0,0,.02)}
 .tbl-wrap{overflow-x:auto}
 .num{font-family:var(--mono);text-align:right}
 .up{color:var(--acid)}.dn{color:var(--rose)}.warn{color:var(--gold)}
 
 .badge{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:.3px}
-.badge-MULTIBAGGER{background:var(--acid-d);color:var(--acid);border:1px solid rgba(0,255,163,.25)}
-.badge-STRONG{background:var(--gold-d);color:var(--gold);border:1px solid rgba(255,183,0,.25)}
-.badge-EMERGING{background:var(--sky-d);color:var(--sky);border:1px solid rgba(61,158,255,.25)}
+.badge-MULTIBAGGER{background:var(--acid-d);color:var(--acid);border:1px solid rgba(22,163,74,.2)}
+.badge-STRONG{background:var(--gold-d);color:var(--gold);border:1px solid rgba(217,119,6,.2)}
+.badge-EMERGING{background:var(--sky-d);color:var(--sky);border:1px solid rgba(37,99,235,.2)}
 .badge-WATCHLIST{background:var(--bg3);color:var(--t3);border:1px solid var(--wire)}
 .rule{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:8px;font-weight:600;padding:2px 6px;border-radius:3px;margin:1px}
 .rule.pass{background:var(--acid-d);color:var(--acid)}
@@ -88,18 +120,18 @@ tr:hover td{background:rgba(255,255,255,.015)}
 .rule.fail::before{content:'✕';color:var(--rose)}
 .rule.pass::before{content:'✓'}
 
-.sc-bar{display:inline-block;width:46px;height:3px;background:var(--bg0);border-radius:2px;overflow:hidden;vertical-align:middle;margin-right:6px}
+.sc-bar{display:inline-block;width:46px;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;vertical-align:middle;margin-right:6px}
 .sc-fill{height:100%;border-radius:2px}
-.btn{padding:8px 18px;border-radius:20px;background:linear-gradient(135deg,var(--acid) 0%,#00cc85 100%);color:var(--bg0);font-family:var(--mono);font-size:10px;font-weight:700;border:none;cursor:pointer;transition:all .2s}
-.btn:hover{box-shadow:var(--acid-g);transform:translateY(-1px)}
+.btn{padding:8px 18px;border-radius:8px;background:linear-gradient(135deg,var(--purple) 0%,#6d28d9 100%);color:#ffffff;font-family:var(--mono);font-size:10px;font-weight:700;border:none;cursor:pointer;transition:all .2s}
+.btn:hover{box-shadow:0 4px 12px rgba(124,58,237,.25);transform:translateY(-1px)}
 .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .btn-ghost{padding:7px 14px;border-radius:8px;border:1px solid var(--wire2);background:transparent;color:var(--t2);font-family:var(--mono);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s}
 .btn-ghost:hover{background:var(--bg3);color:var(--t1);border-color:var(--wire3)}
-.btn-danger{padding:4px 10px;border-radius:6px;border:1px solid rgba(255,48,96,.3);background:transparent;color:var(--rose);font-family:var(--mono);font-size:9px;cursor:pointer}
+.btn-danger{padding:4px 10px;border-radius:6px;border:1px solid rgba(220,38,38,.3);background:transparent;color:var(--rose);font-family:var(--mono);font-size:9px;cursor:pointer}
 .btn-danger:hover{background:var(--rose-d)}
 
-input,select{background:var(--bg3);border:1px solid var(--wire2);color:var(--t0);border-radius:8px;font-family:var(--mono);font-size:10px;padding:7px 10px;outline:none;transition:border .15s}
-input:focus,select:focus{border-color:var(--acid);box-shadow:0 0 0 3px var(--acid-d)}
+input,select{background:var(--bg2);border:1px solid var(--wire2);color:var(--t0);border-radius:8px;font-family:var(--mono);font-size:10px;padding:7px 10px;outline:none;transition:border .15s}
+input:focus,select:focus{border-color:var(--purple);box-shadow:0 0 0 3px var(--purple-d)}
 input::placeholder{color:var(--t3)}
 label{font-family:var(--mono);font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;display:flex;flex-direction:column;gap:5px}
 .filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
@@ -112,20 +144,61 @@ label{font-family:var(--mono);font-size:8px;color:var(--t3);text-transform:upper
 
 .alloc{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--wire);font-family:var(--mono);font-size:10px;font-weight:600}
 .alloc>div{display:flex;align-items:center;justify-content:center}
-.alloc .eq{background:linear-gradient(135deg,rgba(0,255,163,.25),rgba(0,204,133,.12));color:var(--acid)}
-.alloc .cs{background:rgba(255,255,255,.05);color:var(--t2)}
+.alloc .eq{background:linear-gradient(135deg,rgba(22,163,74,.15),rgba(22,163,74,.08));color:var(--acid)}
+.alloc .cs{background:var(--bg3);color:var(--t2)}
 
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:40px 20px;text-align:center}
 .empty-icon{font-size:30px;opacity:.35}
 .empty-txt{font-family:var(--mono);font-size:11px;color:var(--t3)}
-.loading-dot{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--acid);animation:pulse 1.4s ease-in-out infinite}
+.loading-dot{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--purple);animation:pulse 1.4s ease-in-out infinite}
 .loading-dot:nth-child(2){animation-delay:.2s}.loading-dot:nth-child(3){animation-delay:.4s}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.3)}}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .anim{animation:rise .3s ease both}
 .note{font-family:var(--mono);font-size:9px;color:var(--t3);line-height:1.6}
 .status-line{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--t2)}
-.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--acid);box-shadow:0 0 8px var(--acid);animation:pulse 1.2s infinite}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--acid);box-shadow:0 0 8px rgba(22,163,74,.4);animation:pulse 1.2s infinite}
+
+/* ── MARKET HEALTH HERO ── */
+.health-hero{background:linear-gradient(135deg,#fafbff 0%,#f0f4ff 100%);border:1px solid rgba(124,58,237,.1);border-radius:14px;padding:24px 28px;display:flex;align-items:center;gap:28px;overflow:hidden}
+.health-hero-left{display:flex;flex-direction:column;gap:4px}
+.health-hero-label{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:2px;color:var(--t2);text-transform:uppercase}
+.health-hero-score{font-family:var(--sans);font-size:72px;font-weight:800;line-height:1;background:linear-gradient(135deg,#7c3aed,#2563eb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.health-hero-bar{width:340px;height:12px;background:var(--bg3);border-radius:6px;overflow:hidden;margin-top:8px}
+.health-hero-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,#7c3aed,#3b82f6);transition:width .8s ease}
+.health-hero-right{display:flex;flex-direction:column;gap:6px;margin-left:auto}
+.health-hero-stat{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;font-weight:600}
+.health-hero-stat .green{color:var(--acid)}.health-hero-stat .red{color:var(--rose)}
+
+/* ── COMMAND CENTER ── */
+.cmd-row{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+@media(max-width:900px){.cmd-row{grid-template-columns:repeat(3,1fr)}}
+.cmd-card{background:#ffffff;border:1px solid var(--wire);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.cmd-card-label{font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:1px;color:var(--t3);text-transform:uppercase}
+.cmd-card-value{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--t0)}
+.cmd-card-value.green{color:var(--acid)}.cmd-card-value.purple{color:var(--purple)}
+
+/* ── METRIC CARDS (regime/breadth/sector/cash) ── */
+.metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:900px){.metric-row{grid-template-columns:repeat(2,1fr)}}
+.metric-card{background:#ffffff;border:1px solid var(--wire);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.metric-card-header{display:flex;align-items:center;justify-content:space-between}
+.metric-card-title{font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:1px;color:var(--t3);text-transform:uppercase}
+.metric-card-icon{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px}
+.metric-card-main{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--t0)}
+.metric-card-sub{font-family:var(--mono);font-size:9px;color:var(--t3)}
+
+/* ── REGIME CHIPS ── */
+.regime-chip{font-family:var(--mono);font-size:9px;font-weight:600;padding:3px 9px;border-radius:4px;display:inline-flex;align-items:center;gap:5px}
+.regime-BULL{background:var(--acid-d);color:var(--acid)}
+.regime-BEAR{background:var(--rose-d);color:var(--rose)}
+.regime-SIDEWAYS{background:var(--gold-d);color:var(--gold)}
+.regime-HIGH_VOLATILITY{background:var(--rose-d);color:var(--rose)}
+.vix-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:var(--bg3);border:1px solid var(--wire);font-family:var(--mono);font-size:10px}
+.vix-dot{width:5px;height:5px;border-radius:50%}
+.vix-dot.safe{background:var(--acid);box-shadow:0 0 6px rgba(22,163,74,.4)}
+.vix-dot.warn{background:var(--gold);box-shadow:0 0 6px rgba(217,119,6,.4)}
+.vix-dot.risk{background:var(--rose);box-shadow:0 0 6px rgba(220,38,38,.4)}
 </style>
 </head>
 <body>
@@ -136,7 +209,7 @@ const {useState, useEffect, useCallback, useMemo, useRef} = React;
 const {LineChart,Line,XAxis,YAxis,Tooltip,ResponsiveContainer,ReferenceDot,Legend} = Recharts;
 
 const API = '';
-const SCORE_COLOR = s => s >= 75 ? '#00ffa3' : s >= 55 ? '#ffb700' : '#ff3060';
+const SCORE_COLOR = s => s >= 75 ? '#16a34a' : s >= 55 ? '#d97706' : '#dc2626';
 const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString('en-IN',{maximumFractionDigits:d});
 const pct = v => v == null || isNaN(v) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%';
 const fmtCr = v => v == null || isNaN(v) ? '—' : '₹' + Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}) + ' Cr';
@@ -167,37 +240,106 @@ function ConfCell({v}){
 function Loader(){ return <div style={{display:'flex',gap:4,padding:'20px 0',justifyContent:'center'}}><span className="loading-dot"/><span className="loading-dot"/><span className="loading-dot"/></div>; }
 function Empty({icon,text,children}){ return <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-txt">{text}</div>{children}</div>; }
 
-/* ── NAV ─────────────────────────────────────────────────────────────── */
+/* ── SIDEBAR ─────────────────────────────────────────────────────────── */
+const SIGNAL_FILTERS = [
+  {key:'ALL',label:'ALL SIGNALS',dot:'blue'},
+  {key:'BUY_RATED',label:'BUY RATED',dot:'green'},
+  {key:'WATCHLIST',label:'WATCH LIST',dot:'amber'},
+  {key:'MULTIBAGGERS',label:'MULTIBAGGERS',dot:'green'},
+  {key:'MICROCAPS',label:'MICROCAPS',dot:'amber'},
+  {key:'LIQUIDITY',label:'LIQUIDITY',dot:'blue'},
+  {key:'RECOVERY',label:'RECOVERY',dot:'blue'},
+];
+function Sidebar({tab,setTab,regime,signalFilter,setSignalFilter}){
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-section">
+        <div className="sidebar-label">View</div>
+        {SIGNAL_FILTERS.map(f=>(
+          <div key={f.key} className={`sidebar-item${signalFilter===f.key?' active':''}`} onClick={()=>setSignalFilter(f.key)}>
+            <span className={`sidebar-dot ${f.dot}`}/>
+            <span>{f.label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="sidebar-section">
+        <div className="sidebar-label">Market Regime</div>
+        {regime && regime.regime ? (
+          <div className={`sidebar-regime-badge ${regime.regime}`}>
+            <span className={`sidebar-dot ${regime.regime==='BULL'?'green':regime.regime==='BEAR'?'red':'amber'}`}/>
+            {regime.regime}
+          </div>
+        ) : <div style={{color:'var(--sidebar-t3)',fontSize:10}}>Loading…</div>}
+        {regime && regime.vix != null && (
+          <div style={{marginTop:8,fontFamily:'var(--mono)',fontSize:10,color:'var(--sidebar-t2)'}}>
+            VIX <span style={{color:'#f59e0b',fontWeight:600}}>{Number(regime.vix).toFixed(1)}</span>
+          </div>
+        )}
+      </div>
+      <div className="sidebar-exec">
+        <div className="sidebar-label">Execution</div>
+        <select defaultValue="SMALL_CAP"><option>SMALL_CAP</option><option>MID_CAP</option><option>LARGE_CAP</option><option>ALL</option></select>
+        <select defaultValue="30D"><option>7D</option><option>30D</option><option>90D</option><option>ALL</option></select>
+      </div>
+      <div className="sidebar-range">
+        <label>Score Range</label>
+        <input type="range" min="0" max="100" defaultValue="50"/>
+        <div className="sidebar-range-val"><span>50.00</span><span>50.00</span></div>
+      </div>
+    </aside>
+  );
+}
+
+/* ── NAV (top) ────────────────────────────────────────────────────────── */
 function Nav({tab,setTab,regime}){
-  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Research','Ideas','Portfolio','Backtest'];
+  const tabs = ['Overview','Market Intelligence','Opportunities','Elite Picks','Discovery','Research','Regime','Ideas','Portfolio','Backtest'];
   const vix = regime && regime.vix;
   const vixClass = !vix ? 'warn' : vix >= 25 ? 'risk' : vix >= 20 ? 'warn' : 'safe';
   return (
-    <nav className="nav">
-      <div className="nav-brand">
-        <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v17 · Single User</div></div>
+    <nav className="topnav">
+      <div className="topnav-brand">
+        <div className="topnav-sigma">Σ</div>
+        <div><div className="topnav-wordmark">SOVEREIGN</div><div className="topnav-sub">Research Terminal</div></div>
       </div>
-      <div className="nav-tabs">
-        {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
+      <div className="topnav-tabs">
+        {tabs.map(t => <button key={t} className={`topnav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
       </div>
-      <div className="nav-right">
+      <div className="topnav-right">
         {regime && regime.regime && <span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span>}
         {vix != null && <div className="vix-pill"><div className={`vix-dot ${vixClass}`}/><span style={{color:'var(--t3)',fontSize:'8px'}}>VIX</span><span style={{color:'var(--gold)',fontWeight:600}}>{Number(vix).toFixed(1)}</span></div>}
+        <span style={{fontSize:14,cursor:'pointer',color:'var(--t2)'}}>⚙</span>
       </div>
     </nav>
   );
 }
 
-/* ── DASHBOARD ───────────────────────────────────────────────────────── */
-function Dashboard(){
+/* ── TICKER STRIP ─────────────────────────────────────────────────────── */
+function TickerStrip({topPicks,onSymbol}){
+  if (!topPicks || topPicks.length === 0) return null;
+  return (
+    <div className="ticker-strip">
+      {topPicks.slice(0,20).map(p=>(
+        <div key={p.symbol} className="ticker-item" onClick={()=>onSymbol && onSymbol(p.symbol)}>
+          <span className="ticker-sym">{p.symbol.replace('.NS','')}</span>
+          <span className="ticker-price">{fmtRs(p.price)}</span>
+          <span className={`ticker-chg ${(p.change_pct||0)>=0?'up':'dn'}`}>{pct(p.change_pct)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── DASHBOARD (OVERVIEW) ─────────────────────────────────────────────── */
+function Dashboard({signalFilter}){
   const [data,setData] = useState(null);
   const [sectors,setSectors] = useState(null);
   const [quality,setQuality] = useState(null);
   const [breakouts,setBreakouts] = useState(null);
+  const [events,setEvents] = useState([]);
   const [err,setErr] = useState(null);
   const [scanning,setScanning] = useState(false);
   const [scanResult,setScanResult] = useState(null);
+  const [explainSym,setExplainSym] = useState(null);
   const [delivery,setDelivery] = useState(null);
   const [delBusy,setDelBusy] = useState(false);
   const refreshDel = async ()=>{
@@ -206,7 +348,14 @@ function Dashboard(){
     j('/api/delivery').then(setDelivery).catch(()=>{});
     setDelBusy(false);
   };
-  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); j('/api/delivery').then(setDelivery).catch(()=>{}); j('/api/research/breakouts').then(setBreakouts).catch(()=>{}); },[load]);
+  const load = useCallback(()=>{
+    j('/api/dashboard').then(setData).catch(e=>setErr(e.message));
+    j('/api/sectors').then(setSectors).catch(()=>{});
+    j('/api/data-quality').then(setQuality).catch(()=>{});
+    j('/api/delivery').then(setDelivery).catch(()=>{});
+    j('/api/research/breakouts').then(setBreakouts).catch(()=>{});
+    j('/api/events?limit=20').then(d=>setEvents(d||[])).catch(()=>{});
+  },[]);
   useEffect(load,[load]);
 
   const runScan = async (force, tier='core')=>{
@@ -218,163 +367,142 @@ function Dashboard(){
 
   if (err && !data) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
   if (!data) return <Loader/>;
-  const {regime, allocation, top_picks, universe_size, universe_tiers, scored, last_scan_at, portfolio_risk} = data;
+  const {regime, allocation, top_picks, universe_size, universe_tiers, scored, last_scan_at, portfolio_risk, breadth} = data;
+  const health = breadth && breadth.market_health != null ? breadth.market_health : null;
+  const newHighs = breadth && breadth.new_highs != null ? Math.round((breadth.new_highs/100) * (scored||0)) : null;
+  const newLows = breadth && breadth.new_lows != null ? Math.round((breadth.new_lows/100) * (scored||0)) : null;
+  const bestSector = sectors && sectors.length ? sectors[0] : null;
+  const topIdea = top_picks && top_picks.length ? top_picks[0] : null;
 
   return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Market Dashboard</div><div className="screen-sub">Regime · Allocation · Top Picks</div></div>
-
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
-        <div className="card" style={{padding:'12px 14px'}}>
-          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>MARKET REGIME</div>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
-            <span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span>
-            <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--t2)'}}>{regime.vix != null ? 'VIX '+Number(regime.vix).toFixed(1) : ''}</span>
-          </div>
-          <div className="note" style={{marginTop:6}}>{regime.reason}</div>
+    <div className="content-scroll anim">
+      {/* ─── MARKET HEALTH SCORE HERO ─── */}
+      <div className="health-hero">
+        <div className="health-hero-left">
+          <div className="health-hero-label">Market Health Score</div>
+          <div className="health-hero-score">{health != null ? health : '—'}</div>
         </div>
-        <div className="card" style={{padding:'12px 14px'}}>
-          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>MARKET HEALTH</div>
-          <div className="stat" style={{marginTop:6}}>
-            <span className={`stat-val ${data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60?'acid':data.breadth.market_health>=45?'gold':'rose') : 't2'}`} style={{fontSize:26}}>{data.breadth && data.breadth.market_health!=null ? data.breadth.market_health : '—'}</span>
-            <span className="stat-key">/100 breadth blend</span>
+        <div style={{flex:1}}>
+          <div className="health-hero-bar">
+            <div className="health-hero-fill" style={{width: (health||0)+'%'}}/>
           </div>
-          <div className="note" style={{marginTop:4}}>{data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60?'Broad participation':data.breadth.market_health>=45?'Mixed tape':'Weak tape') : 'Run a scan'}</div>
         </div>
-        <div className="card" style={{padding:'12px 14px'}}>
-          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>TOP SECTOR</div>
-          <div style={{fontSize:16,fontWeight:700,color:'var(--t0)',marginTop:6}}>{sectors && sectors.length ? sectors[0].sector : '—'}</div>
-          <div className="note" style={{marginTop:4}}>{sectors && sectors.length ? `#${sectors[0].rank} · strength ${fmt(sectors[0].strength,0)} · ${sectors[0].count} stocks` : 'Run a scan'}</div>
-        </div>
-        <div className="card" style={{padding:'12px 14px'}}>
-          <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>CASH ALLOCATION</div>
-          <div className="stat" style={{marginTop:6}}>
-            <span className={`stat-val ${allocation && allocation.equity>=70?'acid':allocation && allocation.equity>=45?'gold':'rose'}`} style={{fontSize:26}}>{allocation ? allocation.equity : '—'}<span style={{fontSize:13}}>%</span></span>
-            <span className="stat-key">suggested equity</span>
-          </div>
-          <div className="note" style={{marginTop:4}}>{allocation && allocation.equity>=70?'Risk-on regime':allocation && allocation.equity>=45?'Balanced stance':'Defensive stance'}</div>
+        <div className="health-hero-right">
+          <div className="health-hero-stat"><span className="green">New Highs:</span> <span style={{color:'var(--t0)'}}>{newHighs != null ? newHighs : '—'}</span></div>
+          <div className="health-hero-stat"><span className="red">New Lows:</span> <span style={{color:'var(--t0)'}}>{newLows != null ? newLows : '—'}</span></div>
         </div>
       </div>
 
-      {data.failed_symbols && data.failed_symbols.length > 0 && (
-        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:14,background:'rgba(255,110,97,0.07)',border:'1px solid rgba(255,110,97,0.35)',borderRadius:10,padding:'8px 12px'}}>
-          <span style={{fontSize:11,fontWeight:700,color:'var(--rose)'}}>⚠ {data.failed_symbols.length}+ fetch failures this scan</span>
-          {data.failed_symbols.slice(0,6).map(f=>(
-            <span key={f.symbol+f.ts} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)'}}>{f.symbol}<span style={{color:'var(--t3)'}}>·{f.source}</span></span>
-          ))}
-          <span className="note" style={{marginLeft:'auto'}}>Tracked per symbol — never silently dropped</span>
+      {/* ─── COMMAND CENTER ─── */}
+      <div className="cmd-row">
+        <div className="cmd-card">
+          <div className="cmd-card-label">Command Center</div>
+          <div className="cmd-card-value">{regime ? (regime.regime === 'BULL' ? 'Bull Trend' : regime.regime === 'BEAR' ? 'Bear Trend' : 'Sideways') : '—'} {regime && regime.vix != null ? <span style={{fontSize:11,fontWeight:400,color:'var(--t2)'}}>({Math.round(health||0)}%)</span> : ''}</div>
         </div>
-      )}
+        <div className="cmd-card">
+          <div className="cmd-card-label">Recommended Action</div>
+          <div className="cmd-card-value green">{allocation && allocation.equity >= 70 ? 'Deploy Capital' : allocation && allocation.equity >= 45 ? 'Stay Invested' : 'Defensive'}</div>
+        </div>
+        <div className="cmd-card">
+          <div className="cmd-card-label">Cash Target</div>
+          <div className="cmd-card-value">{allocation ? allocation.cash : '—'}%</div>
+        </div>
+        <div className="cmd-card">
+          <div className="cmd-card-label">Best Factor</div>
+          <div className="cmd-card-value purple">Momentum</div>
+        </div>
+        <div className="cmd-card">
+          <div className="cmd-card-label">Best Sector</div>
+          <div className="cmd-card-value">{bestSector ? bestSector.sector : '—'}</div>
+        </div>
+        <div className="cmd-card">
+          <div className="cmd-card-label">Top Idea</div>
+          <div className="cmd-card-value" style={{cursor:'pointer'}} onClick={()=>topIdea && setExplainSym(topIdea.symbol)}>{topIdea ? topIdea.symbol.replace('.NS','') : '—'}</div>
+        </div>
+      </div>
 
+      {/* ─── 4 METRIC CARDS ─── */}
+      <div className="metric-row">
+        <div className="metric-card">
+          <div className="metric-card-header">
+            <div className="metric-card-title">Regime</div>
+            <span className={`regime-chip regime-${regime?.regime||'SIDEWAYS'}`}>{regime?.regime||'—'}</span>
+          </div>
+          <div className="metric-card-main" style={{color: regime?.regime==='BULL'?'var(--acid)':regime?.regime==='BEAR'?'var(--rose)':'var(--gold)'}}>
+            {regime ? (regime.regime === 'BULL' ? 'Bull Regime' : regime.regime === 'BEAR' ? 'Bear Regime' : 'Sideways Regime') : '—'}
+          </div>
+          <div className="metric-card-sub">{regime && regime.adx != null ? 'ADX '+Number(regime.adx).toFixed(1)+' · ' : ''}{regime ? regime.reason?.substring(0,60)+'…' : ''}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-card-header">
+            <div className="metric-card-title">Breadth</div>
+          </div>
+          <div className="metric-card-main" style={{color: breadth && breadth.above_50 >= 50 ? 'var(--acid)' : breadth && breadth.above_50 >= 35 ? 'var(--gold)' : 'var(--rose)'}}>
+            {breadth ? breadth.above_50+'%' : '—'} <span style={{fontSize:11,fontWeight:400,color:'var(--t2)'}}> {'>'} 50DMA</span>
+          </div>
+          <div className="metric-card-sub">{breadth && breadth.market_health != null ? (breadth.market_health >= 60 ? 'Improving' : breadth.market_health >= 45 ? 'Mixed' : 'Weak') : 'Run a scan'}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-card-header">
+            <div className="metric-card-title">Top Sector</div>
+          </div>
+          <div className="metric-card-main">{bestSector ? bestSector.sector : '—'}</div>
+          <div className="metric-card-sub">{bestSector ? '#'+bestSector.rank+' · strength '+fmt(bestSector.strength,0)+' · '+bestSector.count+' stocks' : 'Run a scan'}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-card-header">
+            <div className="metric-card-title">Cash Level</div>
+          </div>
+          <div className="metric-card-main" style={{color: allocation && allocation.equity >= 70 ? 'var(--acid)' : allocation && allocation.equity >= 45 ? 'var(--gold)' : 'var(--rose)'}}>
+            {allocation ? allocation.cash : '—'}%
+          </div>
+          <div className="metric-card-sub">{allocation ? allocation.note?.substring(0,60) : '—'}</div>
+        </div>
+      </div>
+
+      {/* ─── TOP OPPORTUNITIES + WATCHLIST EVENTS ─── */}
       <div className="grid2">
         <div className="card">
-          <div className="card-hdr"><span className="card-title">Market Regime</span><span className={`regime-chip regime-${regime.regime}`}>{regime.regime}</span></div>
-          <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{fmt(regime.nifty,0)}</span><span className="stat-key">NIFTY 50</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{fmt(regime.nifty_200dma,0)}</span><span className="stat-key">200-DMA {regime.above_200dma ? '· above ✓' : '· below ✗'}</span></div>
-            <div className="stat"><span className="stat-val gold" style={{fontSize:18}}>{regime.vix != null ? Number(regime.vix).toFixed(1) : '—'}</span><span className="stat-key">India VIX</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{regime.adx != null ? Number(regime.adx).toFixed(1) : '—'}</span><span className="stat-key">ADX</span></div>
-          </div>
-          <div className="note" style={{marginTop:12}}>{regime.reason}</div>
-        </div>
-
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Suggested Cash Allocation</span></div>
-          <div className="alloc">
-            <div className="eq" style={{width:allocation.equity+'%'}}>EQUITY {allocation.equity}%</div>
-            <div className="cs" style={{width:allocation.cash+'%'}}>CASH {allocation.cash}%</div>
-          </div>
-          <div className="note" style={{marginTop:12}}>{allocation.note}</div>
-          <div className="status-line" style={{marginTop:14}}>
-            <span className="pulse-dot"/> {scored} of {universe_size} stocks scored · {universe_tiers ? `core ${universe_tiers.core || 0} · discovery ${universe_tiers.discovery || 0}` : ''} {last_scan_at ? '· last scan ' + new Date(last_scan_at).toLocaleString() : '· no scan yet'}
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Portfolio Risk</span><span className="note">top-8 Kelly-Lite book · diversification-adjusted</span></div>
-        {!portfolio_risk || !portfolio_risk.n ? <div className="note">Run a scan to build the risk readout.</div> : (
-          <div style={{display:'flex',gap:26,flexWrap:'wrap',alignItems:'center'}}>
-            <div className="stat"><span className={`stat-val ${portfolio_risk.risk_grade==='CONSERVATIVE'?'acid':portfolio_risk.risk_grade==='BALANCED'?'gold':'rose'}`} style={{fontSize:18}}>{portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.portfolio_vol!=null ? portfolio_risk.portfolio_vol+'%' : '—'}</span><span className="stat-key">Portfolio Vol (est.)</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.avg_max_dd!=null ? portfolio_risk.avg_max_dd+'%' : '—'}</span><span className="stat-key">Weighted Max DD</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.top1_share!=null ? portfolio_risk.top1_share+'%' : '—'}</span><span className="stat-key">Top-1 Weight</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
-            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Data Quality</span><span className="note">yFinance fundamentals coverage · the bottleneck</span></div>
-        {!quality || !quality.n ? <div className="note">Run a scan to measure field coverage.</div> : (
-          <div>
-            <div style={{display:'flex',gap:24,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
-              <div className="stat"><span className={`stat-val ${quality.avg_confidence!=null && quality.avg_confidence>=70?'acid':quality.avg_confidence!=null && quality.avg_confidence>=50?'gold':'rose'}`} style={{fontSize:18}}>{quality.avg_confidence!=null ? quality.avg_confidence : '—'}</span><span className="stat-key">Avg Data Confidence</span></div>
-              <div className="stat"><span className="stat-val" style={{fontSize:18}}>{quality.n}</span><span className="stat-key">Names with fundamentals</span></div>
+          <div className="card-hdr"><span className="card-title">Top Opportunities</span>
+            <div style={{display:'flex',gap:6}}>
+              <button className="btn-ghost" style={{fontSize:9,padding:'4px 10px'}} disabled={scanning} onClick={()=>runScan(false)}>{scanning ? 'Scanning…' : '⟳ Scan'}</button>
+              <button className="btn" style={{fontSize:9,padding:'4px 10px'}} disabled={scanning} onClick={()=>runScan(true)}>{scanning ? 'Scanning…' : '⚡ Force'}</button>
             </div>
-            <div style={{display:'flex',flexDirection:'column',gap:5}}>
-              {quality.fields.slice(0,6).map(f=>(
-                <div key={f.key} style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:90}}>{f.label}</span>
-                  <div style={{flex:1,height:6,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
-                    <div style={{height:'100%',width:f.coverage+'%',background:f.coverage<50?'var(--rose)':f.coverage<80?'var(--gold)':'var(--acid)',borderRadius:4}}/>
-                  </div>
-                  <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:'var(--t1)',width:44,textAlign:'right'}}>{f.coverage}%</span>
-                </div>
-              ))}
-            </div>
-            <div className="note" style={{marginTop:10}}>Weakest fields first — low coverage holds those names' scores down via the confidence dampener. A fundamentals refresh (force scan after the 24h TTL) repopulates them.</div>
           </div>
-        )}
-      </div>
-
-      <div className="grid2">
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Market Breadth</span><span className="note">{data.breadth && data.breadth.n ? data.breadth.n + ' stocks' : ''}</span></div>
-          {!data.breadth || !data.breadth.n ? <div className="note">Run a scan to compute breadth.</div> : (
-            <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
-              <div className="stat"><span className={`stat-val ${data.breadth.above_200>=50?'acid':data.breadth.above_200>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_200}%</span><span className="stat-key">Above 200-DMA</span></div>
-              <div className="stat"><span className={`stat-val ${data.breadth.above_50>=50?'acid':data.breadth.above_50>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_50}%</span><span className="stat-key">Above 50-DMA</span></div>
-              <div className="stat"><span className={`stat-val ${data.breadth.above_20>=50?'acid':data.breadth.above_20>=35?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.above_20}%</span><span className="stat-key">Above 20-DMA</span></div>
-              <div className="stat"><span className={`stat-val ${data.breadth.new_highs!=null && data.breadth.new_highs>=10?'acid':data.breadth.new_highs!=null && data.breadth.new_highs>=5?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.new_highs!=null ? data.breadth.new_highs+'%' : '—'}</span><span className="stat-key">52W New Highs</span></div>
-              <div className="stat"><span className={`stat-val ${data.breadth.new_lows!=null && data.breadth.new_lows>=10?'rose':data.breadth.new_lows!=null && data.breadth.new_lows>=5?'gold':'acid'}`} style={{fontSize:18}}>{data.breadth.new_lows!=null ? data.breadth.new_lows+'%' : '—'}</span><span className="stat-key">52W New Lows</span></div>
-              <div className="stat"><span className={`stat-val ${data.breadth.market_health>=60?'acid':data.breadth.market_health>=45?'gold':'rose'}`} style={{fontSize:18}}>{data.breadth.market_health}</span><span className="stat-key">Market Health</span></div>
+          {scanResult && (
+            <div className="note" style={{marginBottom:10}}>
+              {scanResult.error ? `Scan failed: ${scanResult.error}` :
+                `✓ [${scanResult.tier || 'core'}] ${scanResult.scored}/${scanResult.scanned} scored in ${scanResult.duration_sec}s · ${scanResult.fundamentals} fundamentals · regime ${scanResult.regime}`}
             </div>
           )}
-          <div className="note" style={{marginTop:12}}>{data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60 ? 'Broad participation — confirms an index-level bull.' : data.breadth.market_health>=45 ? 'Mixed tape — index strength not confirmed by breadth.' : 'Weak breadth — the index is being led by a few names.') : ''}</div>
-        </div>
-
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">NSE Delivery</span><span className="note">daily delivery position · accumulation signal</span>
-            <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={delBusy} onClick={refreshDel}>{delBusy ? 'Fetching…' : '⟳ Refresh'}</button>
-          </div>
-          {!delivery ? <div className="note">Delivery tracking on — paste SCRAPERAPI_KEY into API Keys if the NSE archive blocks the refresh.</div> : delivery.accumulators.length === 0 ? (
-            <div className="note">No delivery data yet{delivery.latest_date ? ' (latest: '+delivery.latest_date+')' : ''} — hit ⟳ Refresh to pull the latest session.</div>
+          {!top_picks || top_picks.length === 0 ? (
+            <Empty icon="📡" text="No scan data yet — run a scan to populate."><button className="btn" onClick={()=>runScan(false)}>Run first scan</button></Empty>
           ) : (
-            <div>
-              <div className="note" style={{marginBottom:8}}>Latest session {delivery.latest_date} · {delivery.coverage[delivery.latest_date] ? delivery.coverage[delivery.latest_date].n+' names, avg '+delivery.coverage[delivery.latest_date].avg_pct+'% delivery' : ''}</div>
-              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {delivery.accumulators.map(a=>(
-                  <span key={a.symbol} style={{fontFamily:'var(--mono)',fontSize:9,padding:'4px 8px',borderRadius:6,background:'var(--bg2)',border:'1px solid var(--wire)',color:'var(--t1)'}}>
-                    <span style={{color:'var(--t0)',fontWeight:700}}>{a.symbol.replace('.NS','')}</span> · {a.delivery_pct!=null?fmt(a.delivery_pct,0)+'% del':'—'}
-                    {a.delivery_score!=null && <span className={a.delivery_score>=65?' up':' dn'}> · acc {fmt(a.delivery_score,0)}</span>}
-                  </span>
-                ))}
-              </div>
+            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+              {top_picks.slice(0,8).map((p,i)=>(
+                <div key={p.symbol} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg2)',borderRadius:8,cursor:'pointer',border:'1px solid var(--wire)'}} onClick={()=>setExplainSym(p.symbol)}>
+                  <span style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--t3)',width:24}}>{i+1}</span>
+                  <span style={{fontWeight:700,color:'var(--t0)',fontSize:12,flex:1}}>{p.symbol.replace('.NS','')}</span>
+                  <span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:700,color:SCORE_COLOR(p.score)}}>{fmt(p.score,0)}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
 
         <div className="card">
-          <div className="card-hdr"><span className="card-title">Today's Ideas</span><span className="note">watchlist intelligence</span></div>
-          {!data.watchlist || data.watchlist.length === 0 ? <div className="note">No events yet — consecutive scans surface RS leaders, score surges, MB elites and top-ranked sectors.</div> : (
-            <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              {data.watchlist.map((e,i)=>(
-                <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontFamily:'var(--mono)',fontSize:10}}>
-                  <span className={`badge badge-${e.event==='RS_LEADER'?'STRONG':e.event==='MB_ELITE'?'MULTIBAGGER':e.event==='SCORE_SURGE'?'EMERGING':'WATCHLIST'}`}>{e.event}</span>
-                  <span style={{color:'var(--t0)',fontWeight:600}}>{e.symbol.replace('.NS','')}</span>
-                  <span style={{color:'var(--t3)'}}>{e.detail}</span>
+          <div className="card-hdr"><span className="card-title">Watchlist Events</span><span className="note">daily idea generator</span></div>
+          {events.length === 0 ? (
+            <div className="note">No events yet — consecutive scans surface RS leaders, score surges, MB elites and top-ranked sectors.</div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+              {events.slice(0,8).map((e,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg2)',borderRadius:8,border:'1px solid var(--wire)'}}>
+                  <span className={`badge badge-${e.event==='RS_LEADER'?'STRONG':e.event==='MB_ELITE'?'MULTIBAGGER':e.event==='SCORE_SURGE'?'EMERGING':'WATCHLIST'}`}>
+                    {e.event==='RS_LEADER'?'RS Leader':e.event==='SCORE_SURGE'?'Score Surge':e.event==='MB_ELITE'?'MB Elite':'Sector Top 3'}
+                  </span>
+                  <span style={{fontWeight:700,color:'var(--t0)',fontSize:12}}>{e.symbol.replace('.NS','')}</span>
+                  <span style={{color:'var(--t2)',flex:1,fontSize:10,fontFamily:'var(--mono)'}}>{e.detail}</span>
                 </div>
               ))}
             </div>
@@ -382,6 +510,7 @@ function Dashboard(){
         </div>
       </div>
 
+      {/* ─── SECTOR ROTATION ─── */}
       <div className="card">
         <div className="card-hdr"><span className="card-title">Sector Rotation</span><span className="note">RS + earnings growth · boost applied to member stocks</span></div>
         {!sectors ? <Loader/> : sectors.length === 0 ? <div className="note">Run a scan to rank sectors.</div> : (
@@ -397,12 +526,13 @@ function Dashboard(){
         )}
       </div>
 
+      {/* ─── SECTOR BREAKOUTS ─── */}
       <div className="card">
-        <div className="card-hdr"><span className="card-title">Sector Breakouts</span><span className="note">sectors pressing their 52-week highs with broad participation · {breakouts ? breakouts.in_breakout.length + ' in breakout / ' + breakouts.n_sectors + ' sectors' : '—'}</span></div>
+        <div className="card-hdr"><span className="card-title">Sector Breakouts</span><span className="note">sectors pressing their 52-week highs · {breakouts ? breakouts.in_breakout.length + ' in breakout / ' + breakouts.n_sectors + ' sectors' : '—'}</span></div>
         {!breakouts ? <Loader/> : breakouts.sectors.length === 0 ? <div className="note">No breakout map yet — needs stored price history (run a scan).</div> : (
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
             {breakouts.sectors.slice(0,6).map(s=>(
-              <div key={s.sector} style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',background:'var(--bg3)',border:'1px solid '+(s.breakout?'rgba(0,255,163,.35)':'var(--wire)'),borderRadius:10,padding:'9px 12px'}}>
+              <div key={s.sector} style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',background:'var(--bg2)',border:'1px solid '+(s.breakout?'rgba(22,163,74,.25)':'var(--wire)'),borderRadius:10,padding:'9px 12px'}}>
                 <span style={{fontWeight:600,color:'var(--t0)',fontSize:12,width:150}}>{s.sector}</span>
                 {s.breakout ? <span className="badge badge-MULTIBAGGER">BREAKOUT</span> : <span className="badge badge-WATCHLIST">{s.n>=3?'building':'too few'}</span>}
                 <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>score {fmt(s.breakout_score,0)} · {s.n} stocks</span>
@@ -419,144 +549,77 @@ function Dashboard(){
                 </div>
               </div>
             ))}
-            <div style={{fontSize:9,color:'var(--t3)'}}>Breakout = 35% near-high + 20% new-high zone + 20% >200D + 15% >50D + 10% 3M momentum · flagged when ≥60 with ≥3 members · leaders = closest to their 52-week high with the strongest 3M return.</div>
           </div>
         )}
       </div>
 
-      <div className="card">
-        <div className="card-hdr">
-          <span className="card-title">Top Picks</span>
-          <div style={{display:'flex',gap:8}}>
-            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false)}>{scanning ? 'Scanning…' : '⟳ Core Scan'}</button>
-            <button className="btn" disabled={scanning} onClick={()=>runScan(true)}>{scanning ? 'Scanning…' : '⚡ Force refresh'}</button>
-            <button className="btn-ghost" disabled={scanning} onClick={()=>runScan(false,'discovery')}>{scanning ? 'Scanning…' : '🧭 Discovery Scan'}</button>
+      {/* ─── NSE DELIVERY ─── */}
+      <div className="grid2">
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">NSE Delivery</span><span className="note">daily delivery position · accumulation signal</span>
+            <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={delBusy} onClick={refreshDel}>{delBusy ? 'Fetching…' : '⟳ Refresh'}</button>
           </div>
-        </div>
-        {scanResult && (
-          <div className="note" style={{marginBottom:10}}>
-            {scanResult.error ? `Scan failed: ${scanResult.error}` :
-              `✓ [${scanResult.tier || 'core'}] ${scanResult.scored}/${scanResult.scanned} scored in ${scanResult.duration_sec}s · ${scanResult.fundamentals} fundamentals · regime ${scanResult.regime}`}
-          </div>
-        )}
-        {top_picks.length === 0 ? (
-          <Empty icon="📡" text="No scan data yet — run a scan to populate the dashboard."><button className="btn" onClick={()=>runScan(false)}>Run first scan</button></Empty>
-        ) : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th>Bucket</th><th className="num">Price</th><th className="num">Day %</th><th className="num">Score</th><th className="num">Δ vs Last Scan</th></tr></thead>
-              <tbody>
-                {top_picks.map((p,i)=>(
-                  <tr key={p.symbol}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{p.symbol.replace('.NS','')}</span></td>
-                    <td style={{color:'var(--t2)'}}>{p.sector}</td>
-                    <td><Bucket b={p.mb_bucket}/></td>
-                    <td className="num">{fmtRs(p.price)}</td>
-                    <td className={`num ${p.change_pct >= 0 ? 'up' : 'dn'}`}>{pct(p.change_pct)}</td>
-                    <td className="num"><ScoreCell score={p.score}/></td>
-                    <td className="num"><Delta v={p.score_delta}/></td>
-                  </tr>
+          {!delivery ? <div className="note">Delivery tracking on — paste SCRAPERAPI_KEY into API Keys if the NSE archive blocks the refresh.</div> : delivery.accumulators.length === 0 ? (
+            <div className="note">No delivery data yet{delivery.latest_date ? ' (latest: '+delivery.latest_date+')' : ''} — hit ⟳ Refresh to pull the latest session.</div>
+          ) : (
+            <div>
+              <div className="note" style={{marginBottom:8}}>Latest session {delivery.latest_date}</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {delivery.accumulators.map(a=>(
+                  <span key={a.symbol} style={{fontFamily:'var(--mono)',fontSize:9,padding:'4px 8px',borderRadius:6,background:'var(--bg2)',border:'1px solid var(--wire)',color:'var(--t1)'}}>
+                    <span style={{color:'var(--t0)',fontWeight:700}}>{a.symbol.replace('.NS','')}</span> · {a.delivery_pct!=null?fmt(a.delivery_pct,0)+'% del':'—'}
+                    {a.delivery_score!=null && <span className={a.delivery_score>=65?' up':' dn'}> · acc {fmt(a.delivery_score,0)}</span>}
+                  </span>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Data Quality</span><span className="note">yFinance fundamentals coverage</span></div>
+          {!quality || !quality.n ? <div className="note">Run a scan to measure field coverage.</div> : (
+            <div>
+              <div style={{display:'flex',gap:24,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
+                <div className="stat"><span className={`stat-val ${quality.avg_confidence!=null && quality.avg_confidence>=70?'acid':quality.avg_confidence!=null && quality.avg_confidence>=50?'gold':'rose'}`} style={{fontSize:18}}>{quality.avg_confidence!=null ? quality.avg_confidence : '—'}</span><span className="stat-key">Avg Data Confidence</span></div>
+                <div className="stat"><span className="stat-val" style={{fontSize:18}}>{quality.n}</span><span className="stat-key">Names with fundamentals</span></div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                {quality.fields.slice(0,4).map(f=>(
+                  <div key={f.key} style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:90}}>{f.label}</span>
+                    <div style={{flex:1,height:6,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:f.coverage+'%',background:f.coverage<50?'var(--rose)':f.coverage<80?'var(--gold)':'var(--acid)',borderRadius:4}}/>
+                    </div>
+                    <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:'var(--t1)',width:44,textAlign:'right'}}>{f.coverage}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ─── PORTFOLIO RISK ─── */}
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Portfolio Risk</span><span className="note">top-8 Kelly-Lite book · diversification-adjusted</span></div>
+        {!portfolio_risk || !portfolio_risk.n ? <div className="note">Run a scan to build the risk readout.</div> : (
+          <div style={{display:'flex',gap:26,flexWrap:'wrap',alignItems:'center'}}>
+            <div className="stat"><span className={`stat-val ${portfolio_risk.risk_grade==='CONSERVATIVE'?'acid':portfolio_risk.risk_grade==='BALANCED'?'gold':'rose'}`} style={{fontSize:18}}>{portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.portfolio_vol!=null ? portfolio_risk.portfolio_vol+'%' : '—'}</span><span className="stat-key">Portfolio Vol (est.)</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.avg_max_dd!=null ? portfolio_risk.avg_max_dd+'%' : '—'}</span><span className="stat-key">Weighted Max DD</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.top1_share!=null ? portfolio_risk.top1_share+'%' : '—'}</span><span className="stat-key">Top-1 Weight</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
+            <div className="stat"><span className="stat-val" style={{fontSize:18}}>{portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
           </div>
         )}
       </div>
+
+      {explainSym && <Explain symbol={explainSym} onClose={()=>setExplainSym(null)}/>}
     </div>
   );
 }
 
-/* ── SCREENER ────────────────────────────────────────────────────────── */
-function Screener(){
-  const [rows,setRows] = useState(null);
-  const [err,setErr] = useState(null);
-  const [explain,setExplain] = useState(null);
-  const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',min_conf:'',bucket:'',sort:'opp'});
-  const [loading,setLoading] = useState(false);
-
-  const load = useCallback(()=>{
-    setLoading(true);
-    const q = new URLSearchParams();
-    if (f.min_score) q.set('min_score', f.min_score);
-    if (f.min_roe) q.set('min_roe', f.min_roe);
-    if (f.min_roce) q.set('min_roce', f.min_roce);
-    if (f.min_growth) q.set('min_growth', f.min_growth);
-    if (f.max_pe) q.set('max_pe', f.max_pe);
-    if (f.min_conf) q.set('min_conf', f.min_conf);
-    if (f.bucket) q.set('bucket', f.bucket);
-    q.set('sort', f.sort);
-    j('/api/scores?'+q.toString()).then(setRows).catch(e=>setErr(e.message)).finally(()=>setLoading(false));
-  },[f]);
-  useEffect(load,[load]);
-
-  const set = k => e => setF({...f,[k]:e.target.value});
-  return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Screener</div><div className="screen-sub">Filter the universe by fundamentals</div></div>
-      <div className="card">
-        <div className="filter-row">
-          <label>Min Score<input type="number" placeholder="0" value={f.min_score} onChange={set('min_score')}/></label>
-          <label>Min ROE %<input type="number" placeholder="0" value={f.min_roe} onChange={set('min_roe')}/></label>
-          <label>Min ROCE %<input type="number" placeholder="0" value={f.min_roce} onChange={set('min_roce')}/></label>
-          <label>Min Growth %<input type="number" placeholder="0" value={f.min_growth} onChange={set('min_growth')}/></label>
-          <label>Max PE<input type="number" placeholder="∞" value={f.max_pe} onChange={set('max_pe')}/></label>
-          <label>Min Conf %<input type="number" placeholder="0" value={f.min_conf} onChange={set('min_conf')}/></label>
-          <label>Bucket
-            <select value={f.bucket} onChange={set('bucket')}>
-              <option value="">All</option>
-              <option value="MULTIBAGGER">Multibagger</option>
-              <option value="STRONG">Strong Candidate</option>
-              <option value="EMERGING">Emerging</option>
-              <option value="WATCHLIST">Watchlist</option>
-            </select>
-          </label>
-          <label>Sort
-            <select value={f.sort} onChange={set('sort')}>
-              <option value="opp">Opportunity</option><option value="score">Score</option><option value="roe">ROE</option><option value="growth">Growth</option><option value="pe">PE</option>
-            </select>
-          </label>
-        </div>
-      </div>
-      <div className="card">
-        {err && <Empty icon="⚠️" text={err}/>}
-        {!err && !rows && <Loader/>}
-        {rows && rows.length === 0 && <Empty icon="🔍" text="No stocks match these filters."/>}
-        {rows && rows.length > 0 && (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th>Rank</th><th>Symbol</th><th>Sector</th><th className="num">Opp</th><th className="num">Score</th><th>Bucket</th>
-                <th className="num">Δ Score</th><th className="num">ROE %</th><th className="num">ROCE %</th><th className="num">Growth %</th>
-                <th className="num">PE</th><th className="num">Mkt Cap</th><th className="num">Trend</th>
-              </tr></thead>
-              <tbody>
-                {rows.map(r=>(
-                  <tr key={r.symbol} style={{cursor:'pointer'}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
-                    <td style={{color:'var(--t2)'}}>{r.sector || '—'}</td>
-                    <td className="num"><ScoreCell score={r.opp_score}/></td>
-                    <td className="num"><ScoreCell score={r.score}/></td>
-                    <td><Bucket b={r.mb_bucket}/></td>
-                    <td className="num"><Delta v={r.score_delta}/></td>
-                    <td className="num">{fmt(r.roe,1)}</td>
-                    <td className="num">{fmt(r.roce,1)}</td>
-                    <td className={`num ${r.sales_growth > 0 ? 'up' : 'dn'}`}>{fmt(r.sales_growth,1)}</td>
-                    <td className="num">{fmt(r.pe,1)}</td>
-                    <td className="num">{fmtCr(r.market_cap)}</td>
-                    <td className="num">{r.trend_ok ? <span className="up">✓</span> : <span style={{color:'var(--t3)'}}>—</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-      {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
-    </div>
-  );
-}
 
 /* ── EXPLAINABILITY DRAWER ───────────────────────────────────────────── */
 const FACTOR_LABELS = [['quality','Quality'],['growth','Growth'],['momentum','Momentum'],['valuation','Valuation'],['risk','Risk'],['revision','Revision'],['rs_boost','RS Boost'],['sector_boost','Sector']];
@@ -565,25 +628,21 @@ function Explain({symbol,onClose}){
   const [err,setErr] = useState(null);
   useEffect(()=>{ setD(null); setErr(null); j('/api/explain/'+symbol).then(setD).catch(e=>setErr(e.message)); },[symbol]);
   const hist = d ? (d.score_history||[]) : [];
-  const pts = hist.length > 1 ? hist.map((v,i)=>`${(i/(hist.length-1))*250},${40-(Math.max(0,Math.min(100,v))/100)*34}`).join(' ') : '';
   return (
     <>
-      <div style={{position:'fixed',inset:0,background:'rgba(4,10,16,0.6)',zIndex:60}} onClick={onClose}/>
-      <div className="anim" style={{position:'fixed',top:0,right:0,bottom:0,width:390,maxWidth:'94vw',background:'var(--bg1)',borderLeft:'1px solid var(--wire2)',zIndex:61,padding:18,overflowY:'auto',display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.3)',zIndex:60}} onClick={onClose}/>
+      <div className="anim" style={{position:'fixed',top:0,right:0,bottom:0,width:390,maxWidth:'94vw',background:'#ffffff',borderLeft:'1px solid var(--wire)',zIndex:61,padding:18,overflowY:'auto',display:'flex',flexDirection:'column',gap:12,boxShadow:'-4px 0 24px rgba(0,0,0,.08)'}}>
         {err ? <Empty icon="⚠️" text={err}/> : !d ? <Loader/> : (
           <>
             <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
               <div>
-                <div style={{fontSize:19,fontWeight:700,color:'var(--t0)',letterSpacing:'0.02em'}}>{symbol.replace('.NS','')}</div>
+                <div style={{fontSize:19,fontWeight:700,color:'var(--t0)'}}>{symbol.replace('.NS','')}</div>
                 <div style={{fontSize:9,color:'var(--t3)',marginTop:2}}>{d.name||''}{d.sector ? ' · '+d.sector : ''}{d.market_cap!=null ? ' · '+fmtCr(d.market_cap) : ''}</div>
               </div>
               <button className="btn-ghost" style={{padding:'2px 9px'}} onClick={onClose}>✕</button>
             </div>
             <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
-              <div>
-                <div style={{fontFamily:'var(--mono)',fontSize:30,fontWeight:700,color:SCORE_COLOR(d.score)}}>{fmt(d.score,0)}</div>
-                <div style={{fontSize:8,color:'var(--t3)',letterSpacing:'0.12em'}}>COMPOSITE</div>
-              </div>
+              <div><div style={{fontFamily:'var(--mono)',fontSize:30,fontWeight:700,color:SCORE_COLOR(d.score)}}>{fmt(d.score,0)}</div><div style={{fontSize:8,color:'var(--t3)',letterSpacing:'0.12em'}}>COMPOSITE</div></div>
               <div style={{display:'flex',flexDirection:'column',gap:5}}>
                 <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:8,color:'var(--t3)'}}>RANK</span><span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:600,color:'var(--t1)'}}>#{d.rank!=null?d.rank:'—'}</span>{d.mb_bucket && <Bucket b={d.mb_bucket}/>}</div>
                 <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:8,color:'var(--t3)'}}>Δ SCORE</span><Delta v={d.score_delta}/></div>
@@ -601,7 +660,7 @@ function Explain({symbol,onClose}){
                   return (
                     <div key={k} style={{display:'flex',alignItems:'center',gap:8}}>
                       <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:74}}>{label}</span>
-                      <div style={{flex:1,height:7,background:'var(--bg0)',borderRadius:4,overflow:'hidden'}}>
+                      <div style={{flex:1,height:7,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
                         <div style={{height:'100%',width:Math.min(100,Math.abs(v))+'%',background:c,borderRadius:4}}/>
                       </div>
                       <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:c,width:44,textAlign:'right'}}>{v>0?'+':''}{Number(v).toFixed(1)}</span>
@@ -616,11 +675,8 @@ function Explain({symbol,onClose}){
             </div>
             {hist.length > 1 && (
               <div className="card" style={{padding:'10px 12px'}}>
-                <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>SCORE TRAIL · LAST {hist.length} SCANS</div>
-                <svg width="100%" height="46" viewBox="0 0 250 44" preserveAspectRatio="none" style={{marginTop:8}}>
-                  <polyline points={pts} fill="none" stroke="var(--acid)" strokeWidth="2"/>
-                </svg>
-                <div style={{display:'flex',justifyContent:'space-between',fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)'}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.12em',color:'var(--t3)'}}>SCORE TRAIL · {hist.length} SCANS</div>
+                <div style={{display:'flex',justifyContent:'space-between',fontFamily:'var(--mono)',fontSize:8,color:'var(--t3)',marginTop:4}}>
                   <span>{Math.min(...hist)}</span><span>{Math.max(...hist)}</span>
                 </div>
               </div>
@@ -632,88 +688,104 @@ function Explain({symbol,onClose}){
   );
 }
 
+/* ── SCREENER ────────────────────────────────────────────────────────── */
+function Screener(){
+  const [rows,setRows] = useState(null);
+  const [err,setErr] = useState(null);
+  const [explain,setExplain] = useState(null);
+  const [f,setF] = useState({min_score:'',min_roe:'',min_roce:'',min_growth:'',max_pe:'',min_conf:'',bucket:'',sort:'opp'});
+  const load = useCallback(()=>{
+    const q = new URLSearchParams();
+    Object.entries(f).forEach(([k,v])=>{ if(v) q.set(k,v); });
+    j('/api/scores?'+q.toString()).then(setRows).catch(e=>setErr(e.message));
+  },[f]);
+  useEffect(load,[load]);
+  const set = k => e => setF({...f,[k]:e.target.value});
+  return (
+    <div className="content-scroll anim">
+      <div><div className="screen-title">Screener</div><div className="screen-sub">Filter the universe by fundamentals</div></div>
+      <div className="card"><div className="filter-row">
+        <label>Min Score<input type="number" placeholder="0" value={f.min_score} onChange={set('min_score')}/></label>
+        <label>Min ROE %<input type="number" placeholder="0" value={f.min_roe} onChange={set('min_roe')}/></label>
+        <label>Min ROCE %<input type="number" placeholder="0" value={f.min_roce} onChange={set('min_roce')}/></label>
+        <label>Min Growth %<input type="number" placeholder="0" value={f.min_growth} onChange={set('min_growth')}/></label>
+        <label>Max PE<input type="number" placeholder="∞" value={f.max_pe} onChange={set('max_pe')}/></label>
+        <label>Min Conf %<input type="number" placeholder="0" value={f.min_conf} onChange={set('min_conf')}/></label>
+        <label>Bucket<select value={f.bucket} onChange={set('bucket')}><option value="">All</option><option value="MULTIBAGGER">Multibagger</option><option value="STRONG">Strong</option><option value="EMERGING">Emerging</option><option value="WATCHLIST">Watchlist</option></select></label>
+        <label>Sort<select value={f.sort} onChange={set('sort')}><option value="opp">Opportunity</option><option value="score">Score</option><option value="roe">ROE</option><option value="growth">Growth</option><option value="pe">PE</option></select></label>
+      </div></div>
+      <div className="card">
+        {err && <Empty icon="⚠️" text={err}/>}
+        {!err && !rows && <Loader/>}
+        {rows && rows.length === 0 && <Empty icon="🔍" text="No stocks match."/>}
+        {rows && rows.length > 0 && (<div className="tbl-wrap"><table>
+          <thead><tr><th>Rank</th><th>Symbol</th><th>Sector</th><th className="num">Opp</th><th className="num">Score</th><th>Bucket</th><th className="num">Δ</th><th className="num">ROE</th><th className="num">ROCE</th><th className="num">Growth</th><th className="num">PE</th><th className="num">Mkt Cap</th></tr></thead>
+          <tbody>{rows.map(r=>(<tr key={r.symbol} style={{cursor:'pointer'}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
+            <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
+            <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
+            <td style={{color:'var(--t2)'}}>{r.sector||'—'}</td>
+            <td className="num"><ScoreCell score={r.opp_score}/></td>
+            <td className="num"><ScoreCell score={r.score}/></td>
+            <td><Bucket b={r.mb_bucket}/></td>
+            <td className="num"><Delta v={r.score_delta}/></td>
+            <td className="num">{fmt(r.roe,1)}</td>
+            <td className="num">{fmt(r.roce,1)}</td>
+            <td className={`num ${r.sales_growth>0?'up':'dn'}`}>{fmt(r.sales_growth,1)}</td>
+            <td className="num">{fmt(r.pe,1)}</td>
+            <td className="num">{fmtCr(r.market_cap)}</td>
+          </tr>))}</tbody>
+        </table></div>)}
+      </div>
+      {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
+    </div>
+  );
+}
+
+/* ── ELITE PICKS ─────────────────────────────────────────────────────── */
 function ElitePicks(){
   const [picks,setPicks] = useState(null);
   const [mbs,setMbs] = useState(null);
   const [err,setErr] = useState(null);
   const [explain,setExplain] = useState(null);
-  useEffect(()=>{
-    j('/api/picks?limit=20').then(setPicks).catch(e=>setErr(e.message));
-    j('/api/mb-candidates?limit=100').then(setMbs).catch(()=>{});
-  },[]);
-  if (err && !picks) return <Empty icon="⚠️" text={err}/>;
-  if (!picks) return <Loader/>;
+  useEffect(()=>{ j("/api/picks?limit=20").then(setPicks).catch(e=>setErr(e.message)); j("/api/mb-candidates?limit=100").then(setMbs).catch(()=>{}); },[]);
+  if (err && !picks) return <div className="content-scroll"><Empty icon="⚠️" text={err}/></div>;
+  if (!picks) return <div className="content-scroll"><Loader/></div>;
   return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Elite Picks</div><div className="screen-sub">Top 20 by institutional score · click a row for factor attribution</div></div>
+    <div className="content-scroll anim">
+      <div><div className="screen-title">Elite Picks</div><div className="screen-sub">Top 20 by institutional score</div></div>
       <div className="card">
         {picks.length === 0 ? <Empty icon="📡" text="Run a scan first."/> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th>Rank</th><th>Symbol</th><th>Bucket</th><th className="num">Conf</th>
-                <th className="num">Score</th><th className="num">Δ Score</th><th className="num">Quality</th><th className="num">Growth</th>
-                <th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th><th className="num">Accum</th>
-              </tr></thead>
-              <tbody>
-                {picks.map(r=>(
-                  <React.Fragment key={r.symbol}>
-                  <tr style={{cursor:'pointer'}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.rank}</td>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
-                    <td><Bucket b={r.mb_bucket}/></td>
-                    <td className="num"><ConfCell v={r.data_confidence}/></td>
-                    <td className="num"><ScoreCell score={r.score}/></td>
-                    <td className="num"><Delta v={r.score_delta}/></td>
-                    <td className="num">{fmt(r.quality,0)}</td>
-                    <td className="num">{fmt(r.growth,0)}</td>
-                    <td className="num">{fmt(r.momentum,0)}</td>
-                    <td className="num">{fmt(r.valuation,0)}</td>
-                    <td className="num">{fmt(r.risk,0)}</td>
-                    <td className="num">{fmt(r.accumulation,0)}</td>
-                  </tr>
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>Rank</th><th>Symbol</th><th>Bucket</th><th className="num">Score</th><th className="num">Δ</th><th className="num">Quality</th><th className="num">Growth</th><th className="num">Momentum</th><th className="num">Valuation</th><th className="num">Risk</th></tr></thead>
+            <tbody>{picks.map(r=>(<tr key={r.symbol} style={{cursor:"pointer"}} onClick={()=>setExplain(e=>e===r.symbol?null:r.symbol)}>
+              <td style={{color:"var(--t3)",fontFamily:"var(--mono)"}}>{r.rank}</td>
+              <td><span style={{color:"var(--t0)",fontWeight:600}}>{r.symbol.replace(".NS","")}</span></td>
+              <td><Bucket b={r.mb_bucket}/></td>
+              <td className="num"><ScoreCell score={r.score}/></td>
+              <td className="num"><Delta v={r.score_delta}/></td>
+              <td className="num">{fmt(r.quality,0)}</td>
+              <td className="num">{fmt(r.growth,0)}</td>
+              <td className="num">{fmt(r.momentum,0)}</td>
+              <td className="num">{fmt(r.valuation,0)}</td>
+              <td className="num">{fmt(r.risk,0)}</td>
+            </tr>))}</tbody>
+          </table></div>
         )}
       </div>
-
       <div className="card">
-        <div className="card-hdr"><span className="card-title">100-Bagger Detector</span><span className="note">{mbs ? `${mbs.length} candidates` : ''}</span></div>
-        {!mbs ? <Loader/> : mbs.length === 0 ? <Empty icon="💎" text="No candidates yet — run a scan first."/> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th className="num">MB Rank</th><th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Δ MB</th><th className="num">Rules</th>
-                <th className="num">Growth</th><th className="num">Quality</th><th className="num">Momentum</th>
-                <th className="num">Compounder</th><th className="num">Reinvest</th><th className="num">Mkt Cap</th>
-              </tr></thead>
-              <tbody>
-                {mbs.slice(0,30).map(r=>(
-                  <tr key={r.symbol}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{r.mb_rank != null ? r.mb_rank : '—'}</td>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
-                    <td className="num"><ScoreCell score={r.mb_score}/></td>
-                    <td><Bucket b={r.mb_bucket}/></td>
-                    <td className="num"><Delta v={r.mb_delta}/></td>
-                    <td style={{fontFamily:'var(--mono)',fontSize:9}}>
-                      {(r.mb_checklist||[]).map(c=>(
-                        <span key={c.code} className={`rule ${c.pass?'pass':'fail'}`} title={c.label}>{c.code}</span>
-                      ))}
-                    </td>
-                    <td className="num">{fmt(r.growth,0)}</td>
-                    <td className="num">{fmt(r.quality,0)}</td>
-                    <td className="num">{fmt(r.momentum,0)}</td>
-                    <td className="num">{fmt(r.compounder_score,0)}</td>
-                    <td className="num">{fmt(r.reinvestment_score,0)}</td>
-                    <td className="num">{fmtCr(r.market_cap)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="card-hdr"><span className="card-title">100-Bagger Detector</span><span className="note">{mbs ? mbs.length+" candidates" : ""}</span></div>
+        {!mbs ? <Loader/> : mbs.length === 0 ? <Empty icon="💎" text="No candidates yet."/> : (
+          <div className="tbl-wrap"><table>
+            <thead><tr><th className="num">MB Rank</th><th>Symbol</th><th className="num">MB Score</th><th>Bucket</th><th className="num">Compounder</th><th className="num">Reinvest</th></tr></thead>
+            <tbody>{mbs.slice(0,20).map(r=>(<tr key={r.symbol}>
+              <td style={{color:"var(--t3)",fontFamily:"var(--mono)"}}>{r.mb_rank!=null?r.mb_rank:"—"}</td>
+              <td><span style={{color:"var(--t0)",fontWeight:600}}>{r.symbol.replace(".NS","")}</span></td>
+              <td className="num"><ScoreCell score={r.mb_score}/></td>
+              <td><Bucket b={r.mb_bucket}/></td>
+              <td className="num">{fmt(r.compounder_score,0)}</td>
+              <td className="num">{fmt(r.reinvestment_score,0)}</td>
+            </tr>))}</tbody>
+          </table></div>
         )}
       </div>
       {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
@@ -725,865 +797,156 @@ function ElitePicks(){
 function Discovery(){
   const [rows,setRows] = useState(null);
   const [err,setErr] = useState(null);
-  const load = useCallback(()=>{ j('/api/discovery').then(d=>setRows(d.rows||[])).catch(e=>setErr(e.message)); },[load]);
+  const load = useCallback(()=>{ j("/api/discovery").then(d=>setRows(d.rows||[])).catch(e=>setErr(e.message)); },[]);
   useEffect(load,[load]);
-  if (err && !rows) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
-  if (!rows) return <Loader/>;
+  if (err && !rows) return <div className="content-scroll"><Empty icon="⚠️" text={err}/></div>;
+  if (!rows) return <div className="content-scroll"><Loader/></div>;
   return (
-    <div className="wrap anim">
+    <div className="content-scroll anim">
       <div><div className="screen-title">Discovery</div><div className="screen-sub">Emerging Leaders · RS acceleration · revision proxy</div></div>
       <div className="card">
-        <div className="card-hdr"><span className="card-title">Emerging Leaders</span><span className="note">{rows.length} discovery-tier names · ranked by discovery score</span></div>
-        {rows.length === 0 ? <Empty icon="🧭" text="No discovery-tier scores yet — run the 🧭 Discovery Scan from the Dashboard."/> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th>#</th><th>Symbol</th><th>Sector</th><th className="num">Discovery</th><th className="num">RS Rank</th><th className="num">RS Accel</th><th className="num">Revision</th><th className="num">Momentum</th><th className="num">Composite</th><th className="num">Δ vs Scan</th><th className="num">Conf</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r,i)=>(
-                  <tr key={r.symbol}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span> {r.rs_accel!=null && r.rs_accel>5 && r.score_delta>0 ? <span className="badge badge-MULTIBAGGER">EMERGING</span> : null}</td>
-                    <td style={{color:'var(--t2)'}}>{r.sector}</td>
-                    <td className="num"><ScoreCell score={r.discovery_score}/></td>
-                    <td className="num">{fmt(r.rs_rank,0)}</td>
-                    <td className="num"><Delta v={r.rs_accel}/></td>
-                    <td className="num">{fmt(r.revision_score,0)}</td>
-                    <td className="num">{fmt(r.momentum,0)}</td>
-                    <td className="num">{fmt(r.score,0)}</td>
-                    <td className="num"><Delta v={r.score_delta}/></td>
-                    <td className="num" style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{r.data_confidence!=null ? r.data_confidence+'%' : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="card-hdr"><span className="card-title">Emerging Leaders</span><span className="note">{rows.length} discovery-tier names</span></div>
+        {rows.length === 0 ? <Empty icon="🧭" text="No discovery-tier scores yet."/> : (
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th className="num">Discovery</th><th className="num">RS Rank</th><th className="num">RS Accel</th><th className="num">Revision</th><th className="num">Score</th><th className="num">Δ</th></tr></thead>
+            <tbody>{rows.map((r,i)=>(<tr key={r.symbol}>
+              <td style={{color:"var(--t3)",fontFamily:"var(--mono)"}}>{i+1}</td>
+              <td><span style={{color:"var(--t0)",fontWeight:600}}>{r.symbol.replace(".NS","")}</span> {r.rs_accel!=null && r.rs_accel>5 && r.score_delta>0 ? <span className="badge badge-MULTIBAGGER">EMERGING</span> : null}</td>
+              <td style={{color:"var(--t2)"}}>{r.sector}</td>
+              <td className="num"><ScoreCell score={r.discovery_score}/></td>
+              <td className="num">{fmt(r.rs_rank,0)}</td>
+              <td className="num"><Delta v={r.rs_accel}/></td>
+              <td className="num">{fmt(r.revision_score,0)}</td>
+              <td className="num">{fmt(r.score,0)}</td>
+              <td className="num"><Delta v={r.score_delta}/></td>
+            </tr>))}</tbody>
+          </table></div>
         )}
-        <div className="note" style={{marginTop:10}}>Discovery Score = 35% RS rank · 25% RS acceleration (1M−3M percentile) · 20% revision proxy · 20% momentum, dampened by data confidence. <b style={{color:'var(--gold)'}}>EMERGING</b> = RS accelerating and composite score rising.</div>
       </div>
     </div>
   );
 }
 
-/* ── RESEARCH (FACTOR + REGIME INTELLIGENCE) ─────────────────────────── */
+/* ── RESEARCH ────────────────────────────────────────────────────────── */
 function Research(){
   const [fdata,setFdata] = useState(null);
   const [rdata,setRdata] = useState(null);
   const [revs,setRevs] = useState([]);
   const [err,setErr] = useState(null);
   const load = useCallback(()=>{
-    Promise.all([j('/api/research/factors'), j('/api/research/regimes'), j('/api/revisions?limit=80')])
+    Promise.all([j("/api/research/factors"), j("/api/research/regimes"), j("/api/revisions?limit=80")])
       .then(([f,r,v])=>{ setFdata(f); setRdata(r); setRevs(v||[]); })
       .catch(e=>setErr(e.message));
-  },[load]);
+  },[]);
   useEffect(load,[load]);
-  if (err && !fdata) return <Empty icon="⚠️" text={err}><button className="btn-ghost" onClick={load}>Retry</button></Empty>;
-  if (!fdata || !rdata) return <Loader/>;
+  if (err && !fdata) return <div className="content-scroll"><Empty icon="⚠️" text={err}/></div>;
+  if (!fdata || !rdata) return <div className="content-scroll"><Loader/></div>;
   const factors = fdata.factors || [];
   const decay = fdata.alpha_decay || [];
   const regimes = rdata.regimes || [];
   const counts = rdata.snapshot_counts || {};
-  const icColor = ic => ic >= 0.15 ? 'var(--acid)' : ic >= 0.05 ? 'var(--gold)' : 'var(--rose)';
-  const corrBg = v => {
-    if (v==null) return 'var(--bg0)';
-    const a = Math.abs(v);
-    if (v>=0) return a>=0.5 ? 'rgba(124,255,150,0.16)' : a>=0.25 ? 'rgba(124,255,150,0.08)' : 'var(--bg0)';
-    return a>=0.5 ? 'rgba(255,90,120,0.16)' : a>=0.25 ? 'rgba(255,90,120,0.08)' : 'var(--bg0)';
-  };
-  const corrTxt = v => v==null ? 'var(--t3)' : v>=0 ? 'var(--acid)' : 'var(--rose)';
+  const icColor = ic => ic >= 0.15 ? "var(--acid)" : ic >= 0.05 ? "var(--gold)" : "var(--rose)";
   return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Research</div><div className="screen-sub">Which factors actually predict returns · per regime</div></div>
-
+    <div className="content-scroll anim">
+      <div><div className="screen-title">Research</div><div className="screen-sub">Which factors actually predict returns</div></div>
       <div className="card">
-        <div className="card-hdr"><span className="card-title">Factor IC</span><span className="note">Spearman IC vs realized 30d forward returns · ranked</span></div>
-        {factors.length === 0 ? <div className="note">No measured signals yet — IC accrues after consecutive scans with elapsed price history.</div> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>#</th><th>Factor</th><th className="num">Avg IC</th><th className="num">Last IC</th><th className="num">Signals</th></tr></thead>
-              <tbody>
-                {factors.map((f,i)=>(
-                  <tr key={f.factor}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
-                    <td><span style={{textTransform:'capitalize',fontWeight:600}}>{f.factor.replace('_',' ')}</span></td>
-                    <td className="num" style={{color:icColor(f.avg_ic),fontFamily:'var(--mono)',fontWeight:600}}>{f.avg_ic!=null ? Number(f.avg_ic).toFixed(3) : '—'}</td>
-                    <td className="num" style={{fontFamily:'var(--mono)'}}>{f.last_ic!=null ? Number(f.last_ic).toFixed(3) : '—'}</td>
-                    <td className="num" style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>{f.n}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="card-hdr"><span className="card-title">Factor IC</span><span className="note">Spearman IC vs 30d forward returns</span></div>
+        {factors.length === 0 ? <div className="note">No measured signals yet.</div> : (
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>#</th><th>Factor</th><th className="num">Avg IC</th><th className="num">Last IC</th><th className="num">Signals</th></tr></thead>
+            <tbody>{factors.map((f,i)=>(<tr key={f.factor}>
+              <td style={{color:"var(--t3)",fontFamily:"var(--mono)"}}>{i+1}</td>
+              <td style={{textTransform:"capitalize",fontWeight:600}}>{f.factor.replace("_"," ")}</td>
+              <td className="num" style={{color:icColor(f.avg_ic),fontWeight:600}}>{f.avg_ic!=null ? Number(f.avg_ic).toFixed(3) : "—"}</td>
+              <td className="num" style={{fontFamily:"var(--mono)"}}>{f.last_ic!=null ? Number(f.last_ic).toFixed(3) : "—"}</td>
+              <td className="num" style={{color:"var(--t3)"}}>{f.n}</td>
+            </tr>))}</tbody>
+          </table></div>
         )}
       </div>
-
       <div className="grid2">
         <div className="card">
-          <div className="card-hdr"><span className="card-title">Alpha Decay</span><span className="note">avg forward return after signals</span></div>
-          {decay.length === 0 ? <div className="note">No measured signals yet — forward returns accrue as elapsed history builds.</div> : (
-            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-              {decay.map(h=>(
-                <div key={h.horizon_days} style={{flex:'1 1 110px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10,padding:'10px 12px'}}>
-                  <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{h.horizon_days}d horizon</div>
-                  <div className={`num ${(h.avg_return_pct||0)>=0?'up':'dn'}`} style={{fontWeight:700,fontSize:15}}>{h.avg_return_pct!=null ? pct(h.avg_return_pct) : '—'}</div>
-                  <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginTop:3}}>hit {h.hit_rate_pct!=null ? fmt(h.hit_rate_pct,0)+'%' : '—'} · n={h.n!=null?h.n:0}</div>
-                </div>
-              ))}
+          <div className="card-hdr"><span className="card-title">Alpha Decay</span></div>
+          {decay.length === 0 ? <div className="note">No measured signals yet.</div> : (
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              {decay.map(h=>(<div key={h.horizon_days} style={{flex:"1 1 110px",background:"var(--bg2)",border:"1px solid var(--wire)",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--t3)"}}>{h.horizon_days}d horizon</div>
+                <div className={} style={{fontWeight:700,fontSize:15}}>{h.avg_return_pct!=null ? pct(h.avg_return_pct) : "—"}</div>
+                <div style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--t3)",marginTop:3}}>hit {h.hit_rate_pct!=null ? fmt(h.hit_rate_pct,0)+"%" : "—"}</div>
+              </div>))}
             </div>
           )}
         </div>
-
         <div className="card">
-          <div className="card-hdr"><span className="card-title">Regime Performance</span><span className="note">best factor per regime</span></div>
-          {regimes.length === 0 ? <div className="note">No regime-split IC yet — accrues with consecutive scans.</div> : (
-            <div style={{display:'flex',flexDirection:'column',gap:8}}>
-              {regimes.map(rg=>(
-                <div key={rg.regime} style={{background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10,padding:'10px 12px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
-                    <span className={`regime-chip regime-${rg.regime}`}>{rg.regime}</span>
-                    <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>{counts[rg.regime]!=null?counts[rg.regime]:0} snapshots</span>
-                  </div>
-                  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
-                    {Object.entries(rg.factors||{}).map(([k,v])=>(
-                      <span key={k} style={{fontFamily:'var(--mono)',fontSize:9,padding:'2px 7px',borderRadius:4,background:k===rg.best_factor?'var(--acid-d)':'var(--bg0)',color:k===rg.best_factor?'var(--acid)':'var(--t2)',fontWeight:k===rg.best_factor?700:400}}>{k} {Number(v).toFixed(2)}</span>
-                    ))}
-                  </div>
-                  {rg.best_factor && <div style={{fontSize:9,color:'var(--acid)',fontFamily:'var(--mono)',marginTop:6}}>▲ best factor: {rg.best_factor}</div>}
+          <div className="card-hdr"><span className="card-title">Regime Performance</span></div>
+          {regimes.length === 0 ? <div className="note">No regime-split IC yet.</div> : (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {regimes.map(rg=>(<div key={rg.regime} style={{background:"var(--bg2)",border:"1px solid var(--wire)",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"space-between"}}>
+                  <span className={}>{rg.regime}</span>
+                  <span style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--t3)"}}>{counts[rg.regime]!=null?counts[rg.regime]:0} snapshots</span>
                 </div>
-              ))}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                  {Object.entries(rg.factors||{}).map(([k,v])=>(<span key={k} style={{fontFamily:"var(--mono)",fontSize:9,padding:"2px 7px",borderRadius:4,background:k===rg.best_factor?'var(--acid-d)':'var(--bg3)',color:k===rg.best_factor?'var(--acid)':'var(--t2)',fontWeight:k===rg.best_factor?700:400}}>{k} {Number(v).toFixed(2)}</span>))}
+                </div>
+              </div>))}
             </div>
           )}
         </div>
       </div>
-
-      <div className="grid2">
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Factor Correlation</span><span className="note">are any factors the same bet twice?</span></div>
-          {(() => {
-            const corr = fdata.correlation || {};
-            const m = corr.matrix || {};
-            const fs = corr.factors || [];
-            return fs.length < 2 ? <div className="note">No correlation matrix yet — builds from the latest factor snapshot (needs ~10 names with data).</div> : (
-              <div style={{overflowX:'auto'}}>
-                <table style={{minWidth:420}}>
-                  <thead><tr><th></th>{fs.map(f=><th key={f} style={{fontSize:9,textTransform:'capitalize',fontFamily:'var(--mono)'}}>{f.replace('_',' ')}</th>)}</tr></thead>
-                  <tbody>
-                    {fs.map(f1=>(
-                      <tr key={f1}>
-                        <td style={{fontSize:9,textTransform:'capitalize',fontFamily:'var(--mono)',color:'var(--t2)',whiteSpace:'nowrap'}}>{f1.replace('_',' ')}</td>
-                        {fs.map(f2=>{
-                          const v = (m[f1]||{})[f2];
-                          return <td key={f2} style={{background:corrBg(v),color:corrTxt(v),textAlign:'center',fontFamily:'var(--mono)',fontSize:10}}>{v!=null ? (v>=0?'+':'')+v.toFixed(2) : '—'}</td>;
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {corr.top_pair && <div style={{fontSize:10,fontFamily:'var(--mono)',color:corrTxt(corr.top_pair.corr),marginTop:8}}>▲ most correlated: {corr.top_pair.a.replace('_',' ')} ⇄ {corr.top_pair.b.replace('_',' ')} {(corr.top_pair.corr>=0?'+':'')+corr.top_pair.corr.toFixed(2)}</div>}
-                {corr.avg_abs_corr!=null && <div style={{fontSize:9,color:'var(--t3)',marginTop:4}}>avg |corr| {corr.avg_abs_corr.toFixed(2)} · {corr.n_pairs} pairs</div>}
-              </div>
-            );
-          })()}
-        </div>
-
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Portfolio Crowding</span><span className="note">factor exposure of the current book vs the market</span></div>
-          {(() => {
-            const cw = fdata.crowding || {};
-            const expo = cw.exposure || {};
-            const keys = Object.keys(expo);
-            return keys.length === 0 ? <div className="note">No exposure yet — needs a saved allocation + a factor snapshot (run a scan).</div> : (
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {cw.concentrated && <div style={{background:'rgba(255,90,120,0.12)',border:'1px solid var(--rose)',color:'var(--rose)',fontSize:10,fontWeight:600,borderRadius:8,padding:'8px 10px'}}>⚠ Crowded: book is {cw.top.value}% in {cw.top.factor.replace('_',' ')} — a one-bet portfolio</div>}
-                {keys.map(f=>{
-                  const v = expo[f];
-                  return (
-                    <div key={f} style={{display:'flex',alignItems:'center',gap:8}}>
-                      <span style={{width:92,fontSize:10,color:'var(--t2)',textTransform:'capitalize',whiteSpace:'nowrap'}}>{f.replace('_',' ')}</span>
-                      <div style={{flex:1,height:8,background:'var(--bg0)',borderRadius:4,overflow:'hidden'}}>
-                        <div style={{width:Math.min(100,v)+'%',height:'100%',background:v>=60?'var(--rose)':v>=40?'var(--gold)':'var(--acid)',borderRadius:4}}/>
-                      </div>
-                      <span style={{fontFamily:'var(--mono)',fontSize:10,width:30,textAlign:'right'}}>{fmt(v,0)}</span>
-                    </div>
-                  );
-                })}
-                <div style={{fontSize:9,color:'var(--t3)',marginTop:4}}>percentile rank of the book's weighted factors vs the whole universe · ≥60 flags crowding</div>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
-
       <div className="card">
-        <div className="card-hdr"><span className="card-title">Earnings Revisions</span><span className="note">reported-quarter momentum · revenue/PAT qoq · free-data proxy, no analyst estimates</span></div>
-        {revs.length === 0 ? <div className="note">No revision events yet — logged when a new reported quarter appears on a scan.</div> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Symbol</th><th>Quarter</th><th>Direction</th><th className="num">Revenue qoq</th><th className="num">PAT qoq</th><th></th></tr></thead>
-              <tbody>
-                {revs.slice(0,25).map((v,i)=>(
-                  <tr key={i}>
-                    <td style={{color:'var(--t0)',fontWeight:600}}>{v.symbol.replace('.NS','')}</td>
-                    <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{v.period_end}</td>
-                    <td><span className={`badge badge-${v.direction==='UPGRADE'?'MULTIBAGGER':v.direction==='DOWNGRADE'?'WATCHLIST':'EMERGING'}`}>{v.direction}</span></td>
-                    <td className={`num ${v.revenue_qoq_pct!=null ? (v.revenue_qoq_pct>=0?'up':'dn') : ''}`}>{v.revenue_qoq_pct!=null ? pct(v.revenue_qoq_pct) : '—'}</td>
-                    <td className={`num ${v.net_income_qoq_pct!=null ? (v.net_income_qoq_pct>=0?'up':'dn') : ''}`}>{v.net_income_qoq_pct!=null ? pct(v.net_income_qoq_pct) : '—'}</td>
-                    <td>{v.is_first_seen ? <span className="badge badge-STRONG">NEW</span> : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="note" style={{opacity:0.7}}>Updated {fdata.updated ? new Date(fdata.updated).toLocaleString('en-IN') : '—'} · honest by design: empty until scans + elapsed history accumulate.</div>
-    </div>
-  );
-}
-
-/* ── PORTFOLIO ───────────────────────────────────────────────────────── */
-const HOLDINGS_KEY = 'sovereign-lite-holdings';
-function Portfolio(){
-  const [holdings,setHoldings] = useState(()=>{ try { return JSON.parse(localStorage.getItem(HOLDINGS_KEY)||'[]'); } catch { return []; } });
-  const [quotes,setQuotes] = useState({});
-  const [universe,setUniverse] = useState([]);
-  const [alloc,setAlloc] = useState(null);
-  const [newSym,setNewSym] = useState('');
-  const [qty,setQty] = useState('');
-  const [avg,setAvg] = useState('');
-  const [err,setErr] = useState(null);
-  const [rebal,setRebal] = useState(null);
-  const [rebalLoading,setRebalLoading] = useState(false);
-  const [runs,setRuns] = useState([]);
-  const [budgets,setBudgets] = useState({});
-  const [budgetMsg,setBudgetMsg] = useState(null);
-
-  const loadRebal = ()=>{
-    setRebalLoading(true);
-    j('/api/rebalance?top_n=8&mode=kelly&max_sector_weight=25', {method:'POST'}).then(setRebal).catch(()=>{}).finally(()=>setRebalLoading(false));
-    j('/api/rebalance/runs?limit=6').then(setRuns).catch(()=>{});
-  };
-  const applyRun = async (id)=>{
-    if (!confirm('Mark this plan as applied? The target book becomes the next baseline.')) return;
-    try { await j('/api/rebalance/'+id+'/apply', {method:'POST'}); j('/api/rebalance/runs?limit=6').then(setRuns).catch(()=>{}); }
-    catch(e){ alert(e.message || 'apply failed'); }
-  };
-  const saveBudgets = async ()=>{
-    const cleaned = {};
-    Object.entries(budgets).forEach(([k,v])=>{ const f = parseFloat(v); if (!isNaN(f) && f>0) cleaned[k]=f; });
-    try {
-      const r = await j('/api/sector-budgets', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cleaned)});
-      setBudgetMsg('Saved — '+(r.saved||0)+' budgets');
-      setTimeout(()=>setBudgetMsg(null), 4000);
-      j('/api/portfolio').then(setAlloc).catch(()=>{});
-    } catch(e){ setBudgetMsg('Save failed: '+(e.message||'')); }
-  };
-
-  useEffect(()=>{ localStorage.setItem(HOLDINGS_KEY, JSON.stringify(holdings)); },[holdings]);
-  useEffect(()=>{ j('/api/universe').then(u=>setUniverse(u.map(x=>x.symbol))).catch(()=>{}); },[]);
-  useEffect(()=>{ j('/api/portfolio').then(setAlloc).catch(()=>{}); },[]);
-  useEffect(()=>{ loadRebal(); },[]);
-  useEffect(()=>{ if (alloc && alloc.sector_budgets) setBudgets(prev=>({...prev, ...alloc.sector_budgets})); },[alloc]);
-  useEffect(()=>{
-    if (!holdings.length) { setQuotes({}); return; }
-    let live = true;
-    (async()=>{
-      const q = {};
-      for (const h of holdings) {
-        try { q[h.symbol] = await j('/api/quote/'+encodeURIComponent(h.symbol)); } catch { q[h.symbol] = null; }
-      }
-      if (live) setQuotes(q);
-    })();
-    return ()=>{ live = false; };
-  },[holdings]);
-
-  const add = (e)=>{
-    e.preventDefault();
-    let sym = newSym.trim().toUpperCase();
-    if (!sym) return;
-    if (!sym.endsWith('.NS') && !sym.endsWith('.BO')) sym += '.NS';
-    const q = parseFloat(qty), a = parseFloat(avg);
-    if (!q || q <= 0 || !a || a <= 0) return;
-    setHoldings(h => [...h.filter(x=>x.symbol!==sym), {symbol:sym, qty:q, avg:a}]);
-    setNewSym(''); setQty(''); setAvg('');
-  };
-  const remove = sym => setHoldings(h=>h.filter(x=>x.symbol!==sym));
-
-  const rows = holdings.map(h=>{
-    const q = quotes[h.symbol] || {};
-    const ltp = q.price;
-    const mv = ltp ? ltp*h.qty : null;
-    const cost = h.avg*h.qty;
-    const pnl = mv != null ? mv - cost : null;
-    const pnlPct = pnl != null && cost ? pnl/cost*100 : null;
-    return {...h, ltp, mv, cost, pnl, pnlPct, chg: q.change_pct};
-  });
-  const totCost = rows.reduce((s,r)=>s+r.cost,0);
-  const totMv = rows.reduce((s,r)=>s+(r.mv||0),0);
-  const totPnl = totMv - totCost;
-  const totPct = totCost ? totPnl/totCost*100 : 0;
-
-  return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Portfolio</div><div className="screen-sub">Suggested allocation · holdings · P&L</div></div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Suggested Allocation</span><span className="note">Position score 40% Quality · 30% MB · 20% RS · 10% Risk · Kelly-Lite sizing (score × quality ÷ volatility)</span></div>
-        {!alloc ? <Loader/> : alloc.allocation.length === 0 ? <div className="note">Run a scan first.</div> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th>#</th><th>Symbol</th><th>Sector</th><th className="num">Position Score</th><th>Bucket</th><th className="num">Weight</th><th style={{width:'40%'}}/>
-              </tr></thead>
-              <tbody>
-                {alloc.allocation.map((a,i)=>(
-                  <tr key={a.symbol}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>{i+1}</td>
-                    <td style={{color:'var(--t0)',fontWeight:600}}>{a.symbol.replace('.NS','')}</td>
-                    <td style={{color:'var(--t2)'}}>{a.sector}</td>
-                    <td className="num"><ScoreCell score={a.pos_score}/></td>
-                    <td><Bucket b={a.mb_bucket}/></td>
-                    <td className="num" style={{fontFamily:'var(--mono)',fontWeight:600}}>{a.weight_pct}%</td>
-                    <td><div style={{height:6,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}><div style={{height:'100%',width:Math.min(100,(a.weight_pct/(alloc.equity_pct||100))*100)+'%',background:'var(--acid)',borderRadius:4}}/></div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:12}} className="grid2">
-              <div>
-                <div className="card-title" style={{marginBottom:8}}>Sector Weights · cap {alloc.max_sector_weight != null ? alloc.max_sector_weight : 25}%</div>
-                <div style={{marginBottom:8}} className="note">Per-sector budgets (empty = global cap):</div>
-                <div style={{display:'flex',flexDirection:'column',gap:5}}>
-                  {Object.entries(alloc.sector_weights||{}).sort((a,b)=>b[1]-a[1]).map(([s,w])=>{
-                    const cap = alloc.max_sector_weight || 25;
-                    return (
-                      <div key={s} style={{display:'flex',alignItems:'center',gap:8}}>
-                        <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',width:100}}>{s}</span>
-                        <div style={{flex:1,height:6,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
-                          <div style={{height:'100%',width:Math.min(100,w/cap*100)+'%',background:w>cap?'var(--rose)':'var(--sky)',borderRadius:4}}/>
-                        </div>
-                        <span style={{fontFamily:'var(--mono)',fontSize:10,fontWeight:600,color:w>cap?'var(--rose)':'var(--t1)',width:44,textAlign:'right'}}>{w}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
-                  {Object.keys(alloc.sector_weights||{}).map(sec=>(
-                    <label key={sec} style={{display:'flex',alignItems:'center',gap:4,fontSize:9,fontFamily:'var(--mono)',color:'var(--t2)'}}>
-                      {sec.replace(/ .*$/,'')}
-                      <input type="number" min="0" max="40" step="1" value={budgets[sec]!=null ? budgets[sec] : ''}
-                        placeholder={(alloc.max_sector_weight||25).toString()}
-                        onChange={e=>setBudgets({...budgets, [sec]: e.target.value})}
-                        style={{width:42,padding:'3px 5px',background:'var(--bg0)',border:'1px solid var(--wire)',borderRadius:5,color:'var(--t0)',fontFamily:'var(--mono)',fontSize:9}}/>
-                    </label>
-                  ))}
-                  <button className="btn-ghost" style={{padding:'4px 10px',fontSize:9}} onClick={saveBudgets}>Save budgets</button>
-                  {budgetMsg && <span style={{fontSize:9,color:'var(--acid)',fontFamily:'var(--mono)'}}>{budgetMsg}</span>}
-                </div>
-              </div>
-              <div>
-                <div className="card-title" style={{marginBottom:8}}>Factor Exposure</div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-                  {['quality','growth','momentum','valuation','risk','mb_score','rs_rank'].map(f=>(
-                    alloc.factor_exposure && alloc.factor_exposure[f]!=null ? (
-                      <span key={f} className={`badge badge-${f==='momentum'?'MULTIBAGGER':f==='quality'?'STRONG':f==='risk'?'WATCHLIST':'EMERGING'}`} style={{fontSize:9,padding:'4px 8px'}}>{f.replace('_score','')}: {fmt(alloc.factor_exposure[f],0)}</span>
-                    ) : null
-                  ))}
-                </div>
-                {alloc.factor_exposure && alloc.factor_exposure.top_factor && (
-                  <div className="note" style={{marginTop:8}}>Dominant factor: <b style={{color:'var(--gold)'}}>{alloc.factor_exposure.top_factor}</b> at {alloc.factor_exposure.top_factor_share}% of the factor mix — {alloc.factor_exposure.top_factor_share > 45 ? 'crowding risk, consider trimming.' : 'balanced enough.'}</div>
-                )}
-              </div>
-            </div>
-            <div className="note" style={{marginTop:8}}>Regime {alloc.regime} · {alloc.equity_pct}% equity deployment · Kelly-Lite 2.0 (score × quality ÷ volatility × drawdown-penalty) with {alloc.max_sector_weight != null ? alloc.max_sector_weight : 25}% sector cap.</div>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Portfolio Risk</span><span className="note">weighted book risk · diversification-adjusted</span></div>
-        {!alloc || !alloc.portfolio_risk || !alloc.portfolio_risk.n ? <div className="note">Run a scan first.</div> : (
-          <div>
-            <div style={{display:'flex',gap:28,flexWrap:'wrap',alignItems:'center'}}>
-              <div className="stat"><span className={`stat-val ${alloc.portfolio_risk.risk_grade==='CONSERVATIVE'?'acid':alloc.portfolio_risk.risk_grade==='BALANCED'?'gold':'rose'}`} style={{fontSize:22}}>{alloc.portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.portfolio_vol!=null ? alloc.portfolio_risk.portfolio_vol+'%' : '—'}</span><span className="stat-key">Portfolio Vol (est.)</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.avg_vol!=null ? alloc.portfolio_risk.avg_vol+'%' : '—'}</span><span className="stat-key">Avg Stock Vol</span></div>
-              <div className="stat"><span className={`stat-val ${alloc.portfolio_risk.avg_max_dd!=null && alloc.portfolio_risk.avg_max_dd > -30 ? 'acid' : alloc.portfolio_risk.avg_max_dd!=null && alloc.portfolio_risk.avg_max_dd > -45 ? 'gold' : 'rose'}`}>{alloc.portfolio_risk.avg_max_dd!=null ? alloc.portfolio_risk.avg_max_dd+'%' : '—'}</span><span className="stat-key">Weighted Max Drawdown</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.top1_share}%</span><span className="stat-key">Top-1 Weight</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.top3_share}%</span><span className="stat-key">Top-3 Weight</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.hhi}</span><span className="stat-key">HHI Concentration</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.effective_n}</span><span className="stat-key">Effective Names</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.avg_quality!=null ? alloc.portfolio_risk.avg_quality : '—'}</span><span className="stat-key">Avg Quality</span></div>
-              <div className="stat"><span className="stat-val">{alloc.portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
-            </div>
-            <div className="note" style={{marginTop:12}}>{alloc.portfolio_risk.risk_grade==='CONSERVATIVE' ? 'Low-vol, diversified book — drawdown protection is the priority.' : alloc.portfolio_risk.risk_grade==='BALANCED' ? 'Moderate risk — volatility and drawdown within normal range.' : 'High-risk book — top names dominate; consider trimming or raising cash.'}</div>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Tax-Aware Rebalancer</span><span className="note">last saved allocation → today's target book · HOLD inside tolerance · STCG/LTCG on realized gains</span>
-          <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={rebalLoading} onClick={loadRebal}>{rebalLoading ? 'Planning…' : '⟳ Recompute'}</button>
-        </div>
-        {!rebal ? <Loader/> : rebal.plan.n_prev === 0 ? (
-          <div className="note">No previous allocation snapshot yet — run a scan and the current book becomes the baseline; the next rebalance plan diffs against it.</div>
-        ) : (
-          <div>
-            <div style={{display:'flex',gap:24,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
-              <div className="stat"><span className={`stat-val ${rebal.plan.turnover_pct<=25?'acid':rebal.plan.turnover_pct<=60?'gold':'rose'}`}>{rebal.plan.turnover_pct}%</span><span className="stat-key">Turnover</span></div>
-              <div className="stat"><span className="stat-val rose">{fmtRs(rebal.plan.total_tax)}</span><span className="stat-key">Est. Tax ({rebal.plan.stcg_tax>0 ? 'STCG '+fmtRs(rebal.plan.stcg_tax)+' · ' : ''}{rebal.plan.ltcg_tax>0 ? 'LTCG '+fmtRs(rebal.plan.ltcg_tax)+' · ' : ''}realized gains)</span></div>
-              <div className="stat"><span className="stat-val">{fmtRs(rebal.plan.cost_est)}</span><span className="stat-key">Costs (0.5% RT)</span></div>
-              <div className="stat"><span className={`stat-val ${rebal.plan.total_drag_pct<=1.5?'acid':rebal.plan.total_drag_pct<=3.5?'gold':'rose'}`}>{rebal.plan.total_drag_pct}%</span><span className="stat-key">Total Drag (tax+cost)</span></div>
-              <div className="stat"><span className="stat-val">{rebal.plan.n_prev} → {rebal.plan.n_target}</span><span className="stat-key">Book size</span></div>
-            </div>
-            {rebal.prev_scan_date && <div className="note" style={{marginBottom:8}}>Baseline from {rebal.prev_scan_date}{rebal.prev_mode ? ' · mode '+rebal.prev_mode : ''} — estimated gains use real entry vs current price.</div>}
-            <div className="tbl-wrap">
-              <table>
-                <thead><tr><th>Symbol</th><th>Action</th><th className="num">Prev %</th><th className="num">Target %</th><th className="num">Notional</th><th className="num">Est. Gain</th><th className="num">Est. Tax</th><th>Why</th></tr></thead>
-                <tbody>
-                  {rebal.plan.trades.map(t=>(
-                    <tr key={t.symbol}>
-                      <td style={{color:'var(--t0)',fontWeight:600}}>{t.symbol.replace('.NS','')}</td>
-                      <td><span className={`badge badge-${t.side==='SELL'?'WATCHLIST':t.side==='TRIM'?'EMERGING':t.side==='BUY'?'MULTIBAGGER':t.side==='ADD'?'STRONG':'ELITE'}`}>{t.side}</span></td>
-                      <td className="num">{t.prev_pct}%</td>
-                      <td className="num">{t.target_pct}%</td>
-                      <td className="num">{t.notional>0 ? fmtRs(t.notional) : '—'}</td>
-                      <td className={`num ${t.est_gain_pct!=null ? (t.est_gain_pct>=0?'up':'dn') : '—'}`}>{t.est_gain_pct!=null ? pct(t.est_gain_pct) : '—'}</td>
-                      <td className="num">{t.est_tax>0 ? fmtRs(t.est_tax)+(t.tax_kind ? ' '+t.tax_kind : '') : '—'}</td>
-                      <td style={{fontSize:10,color:'var(--t2)'}}>{t.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="note" style={{marginTop:8}}>Anti-churn by design: names still in top-N with drift under ±2% are HOLD — a winner is never sold just to be re-bought.</div>
-
-            {rebal.plan.cash_plan && (
-              <div style={{marginTop:12,padding:'10px 12px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10}}>
-                <div className="card-title" style={{fontSize:10,marginBottom:6}}>Cash Plan · {rebal.plan.cash_plan.target_cash_pct}% target cash ({rebal.plan.cash_plan.base_cash_pct}% regime + {rebal.plan.cash_plan.extra_buffer}% buffer)</div>
-                {rebal.plan.cash_plan.reasons.map((r,i)=><div key={i} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--gold)'}}>▸ {r}</div>)}
-                {rebal.plan.cash_plan.wait_for_pullback.length>0 && <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',marginTop:4}}>Wait for pullback: {rebal.plan.cash_plan.wait_for_pullback.map(x=>x.replace('.NS','')).join(', ')} (RS≥95 but score<72)</div>}
-                {rebal.plan.cash_plan.capped_liquidity.length>0 && <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginTop:2}}>Thin liquidity, size carefully: {rebal.plan.cash_plan.capped_liquidity.map(x=>x.replace('.NS','')).join(', ')}</div>}
-                <div style={{display:'flex',gap:14,marginTop:6,fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>
-                  {rebal.plan.cash_plan.deploy_schedule.map(d=>(
-                    <span key={d.phase}>{d.phase}: {d.pct}% — {d.trigger}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={{display:'flex',alignItems:'center',gap:10,marginTop:12}}>
-              <button className="btn" style={{padding:'6px 14px',fontSize:10}} disabled={!rebal.run_id} onClick={()=>applyRun(rebal.run_id)}>✓ Mark Applied</button>
-              <span className="note">Apply only after you've executed the trades — the target book becomes the next scan's baseline.</span>
-            </div>
-
-            {runs.length > 0 && (
-              <div className="tbl-wrap" style={{marginTop:12}}>
-                <table>
-                  <thead><tr><th>Run</th><th>Created</th><th className="num">Turnover</th><th className="num">Tax</th><th className="num">Drag</th><th>State</th></tr></thead>
-                  <tbody>
-                    {runs.map(r=>(
-                      <tr key={r.id}>
-                        <td style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>#{r.id}</td>
-                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{new Date(r.created_at).toLocaleString('en-IN')}</td>
-                        <td className="num">{r.plan && r.plan.turnover_pct!=null ? r.plan.turnover_pct+'%' : '—'}</td>
-                        <td className="num">{r.plan && r.plan.total_tax!=null ? fmtRs(r.plan.total_tax) : '—'}</td>
-                        <td className="num">{r.plan && r.plan.total_drag_pct!=null ? r.plan.total_drag_pct+'%' : '—'}</td>
-                        <td>{r.applied ? <span className="badge badge-STRONG">APPLIED</span> : <span className="badge badge-WATCHLIST">PLANNED</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="grid3">
-        <div className="card"><div className="stat"><span className="stat-val">{fmtRs(totMv)}</span><span className="stat-key">Market Value</span></div></div>
-        <div className="card"><div className="stat"><span className={`stat-val ${totPnl>=0?'acid':'rose'}`}>{fmtRs(totPnl)} <span style={{fontSize:12}}>({pct(totPct)})</span></span><span className="stat-key">Total P&L</span></div></div>
-        <div className="card"><div className="stat"><span className="stat-val">{rows.length}</span><span className="stat-key">Holdings</span></div></div>
-      </div>
-
-      <div className="card">
-        <div className="card-hdr"><span className="card-title">Add Holding</span></div>
-        <form className="filter-row" onSubmit={add}>
-          <label>Symbol
-            <input list="universe-syms" placeholder="RELIANCE.NS" value={newSym} onChange={e=>setNewSym(e.target.value)}/>
-            <datalist id="universe-syms">{universe.map(s=><option key={s} value={s}/>)}</datalist>
-          </label>
-          <label>Qty<input type="number" min="1" placeholder="10" value={qty} onChange={e=>setQty(e.target.value)}/></label>
-          <label>Avg Price (₹)<input type="number" min="0.01" placeholder="2500" value={avg} onChange={e=>setAvg(e.target.value)}/></label>
-          <button className="btn" type="submit">Add</button>
-        </form>
-        {err && <div className="note" style={{color:'var(--rose)',marginTop:8}}>{err}</div>}
-      </div>
-
-      <div className="card">
-        {rows.length === 0 ? <Empty icon="💼" text="No holdings yet — add your first position above."/> : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th>Symbol</th><th className="num">Qty</th><th className="num">Avg Cost</th><th className="num">LTP</th>
-                <th className="num">Day %</th><th className="num">Cost</th><th className="num">Market Value</th>
-                <th className="num">P&L</th><th className="num">P&L %</th><th></th>
-              </tr></thead>
-              <tbody>
-                {rows.map(r=>(
-                  <tr key={r.symbol}>
-                    <td><span style={{color:'var(--t0)',fontWeight:600}}>{r.symbol.replace('.NS','')}</span></td>
-                    <td className="num">{r.qty}</td>
-                    <td className="num">{fmtRs(r.avg)}</td>
-                    <td className="num">{fmtRs(r.ltp)}</td>
-                    <td className={`num ${r.chg>=0?'up':'dn'}`}>{r.chg!=null ? pct(r.chg) : '—'}</td>
-                    <td className="num">{fmtRs(r.cost)}</td>
-                    <td className="num">{fmtRs(r.mv)}</td>
-                    <td className={`num ${r.pnl>=0?'up':'dn'}`}>{fmtRs(r.pnl)}</td>
-                    <td className={`num ${r.pnlPct>=0?'up':'dn'}`}>{pct(r.pnlPct)}</td>
-                    <td><button className="btn-danger" onClick={()=>remove(r.symbol)}>✕</button></td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{background:'var(--bg3)'}}>
-                  <td colSpan="5" style={{fontWeight:600,color:'var(--t0)'}}>Total</td>
-                  <td className="num" style={{color:'var(--t0)'}}>{fmtRs(totCost)}</td>
-                  <td className="num" style={{color:'var(--t0)'}}>{fmtRs(totMv)}</td>
-                  <td className={`num ${totPnl>=0?'up':'dn'}`} style={{fontWeight:700}}>{fmtRs(totPnl)}</td>
-                  <td className={`num ${totPnl>=0?'up':'dn'}`} style={{fontWeight:700}}>{pct(totPct)}</td>
-                  <td/>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+        <div className="card-hdr"><span className="card-title">Earnings Revisions</span></div>
+        {revs.length === 0 ? <div className="note">No revision events yet.</div> : (
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>Symbol</th><th>Quarter</th><th>Direction</th><th className="num">Revenue qoq</th><th className="num">PAT qoq</th></tr></thead>
+            <tbody>{revs.slice(0,25).map((v,i)=>(<tr key={i}>
+              <td style={{color:"var(--t0)",fontWeight:600}}>{v.symbol.replace(".NS","")}</td>
+              <td style={{fontFamily:"var(--mono)",color:"var(--t2)"}}>{v.period_end}</td>
+              <td><span className={}>{v.direction}</span></td>
+              <td className={}>{v.revenue_qoq_pct!=null?pct(v.revenue_qoq_pct):'—'}</td>
+              <td className={}>{v.net_income_qoq_pct!=null?pct(v.net_income_qoq_pct):'—'}</td>
+            </tr>))}</tbody>
+          </table></div>
         )}
       </div>
     </div>
   );
 }
 
-/* ── BACKTEST ─────────────────────────────────────────────────────────── */
-function Backtest(){
-  const [params,setParams] = useState({years:'3', top_n:'10', initial:'1000000', stop:'0.20', cost:'0.25'});
-  const [result,setResult] = useState(null);
-  const [runs,setRuns] = useState([]);
-  const [running,setRunning] = useState(false);
-  const [err,setErr] = useState(null);
-
-  const [alphaData,setAlphaData] = useState(null);
-  const [bm,setBm] = useState(null);
-  const [bmBusy,setBmBusy] = useState(false);
-  const loadBm = ()=> j('/api/benchmarks').then(setBm).catch(()=>{});
-  const refreshBm = async ()=>{
-    setBmBusy(true);
-    try { await j('/api/benchmarks/refresh', {method:'POST'}); } catch {}
-    await loadBm();
-    setBmBusy(false);
-  };
-  useEffect(()=>{ j('/api/backtests?limit=5').then(setRuns).catch(()=>{}); j('/api/alpha').then(setAlphaData).catch(()=>{}); loadBm(); },[]);
-
-  const run = async ()=>{
-    setRunning(true); setErr(null); setResult(null);
-    try {
-      const r = await j('/api/backtest', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({years:parseInt(params.years)||3, top_n:parseInt(params.top_n)||10,
-          initial_capital:parseFloat(params.initial)||1000000, trailing_stop_pct:parseFloat(params.stop)||0.2, cost_pct:parseFloat(params.cost)||0.25})});
-      setResult(r);
-      j('/api/backtests?limit=5').then(setRuns).catch(()=>{});
-    } catch(e){ setErr(e.detail || e.message); }
-    finally { setRunning(false); }
-  };
-  const set = k => e => setParams({...params,[k]:e.target.value});
-  const s = result ? result.summary : null;
-  const [wf,setWf] = useState(null);
-  const [wfRunning,setWfRunning] = useState(false);
-  const [wfErr,setWfErr] = useState(null);
-  const runWF = async ()=>{
-    setWfRunning(true); setWfErr(null); setWf(null);
-    try {
-      const r = await j('/api/backtest/walk-forward', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({fold_months:12, folds:3, top_n:parseInt(params.top_n)||10,
-          initial_capital:parseFloat(params.initial)||1000000, trailing_stop_pct:parseFloat(params.stop)||0.2})});
-      setWf(r);
-    } catch(e){ setWfErr(e.detail || e.message); }
-    finally { setWfRunning(false); }
-  };
-
-  return (
-    <div className="wrap anim">
-      <div><div className="screen-title">Backtest</div><div className="screen-sub">Momentum + trend strategy · monthly rebalance · trailing stop · walk-forward</div></div>
-
-      <div className="card">
-        <div className="filter-row">
-          <label>Years<input type="number" min="1" max="10" value={params.years} onChange={set('years')}/></label>
-          <label>Top N per month<input type="number" min="1" max="30" value={params.top_n} onChange={set('top_n')}/></label>
-          <label>Initial Capital (₹)<input type="number" value={params.initial} onChange={set('initial')}/></label>
-          <label>Trailing Stop %<input type="number" step="0.05" value={params.stop} onChange={set('stop')}/></label>
-          <label>Cost %/side<input type="number" step="0.05" value={params.cost} onChange={set('cost')}/></label>
-          <button className="btn" disabled={running} onClick={run}>{running ? 'Running…' : '▶ Run Backtest'}</button>
-          <button className="btn-ghost" disabled={running || wfRunning} onClick={runWF}>{wfRunning ? 'Running…' : '⇄ Walk-Forward (3×12m)'}</button>
-        </div>
-        {err && <div className="note" style={{color:'var(--rose)',marginTop:10}}>{err}</div>}
-        {wfErr && <div className="note" style={{color:'var(--rose)',marginTop:10}}>{wfErr}</div>}
-        {result && result.warnings && result.warnings.length > 0 && <div className="note" style={{color:'var(--gold)',marginTop:10}}>{result.warnings.join(' · ')}</div>}
-      </div>
-
-      {bm && (
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Index Benchmarks</span><span className="note">stored NIFTY 50 · Midcap 150 · Smallcap 250 — refreshed with every scan</span>
-            <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={bmBusy} onClick={refreshBm}>{bmBusy ? 'Fetching…' : '⟳ Refresh'}</button>
-          </div>
-          <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
-            {Object.values(bm.coverage||{}).map(c=>(
-              <div key={c.symbol} className="stat">
-                <span className="stat-val" style={{fontSize:14}}>{c.rows>0 ? c.rows+' rows' : '—'}</span>
-                <span className="stat-key">{c.symbol} · {c.first_date ? c.first_date+' → '+c.last_date : 'not stored yet'}</span>
-              </div>
-            ))}
-            {!bm.coverage || Object.keys(bm.coverage).length===0 ? <div className="note">No index data stored — run a scan (or ⟳ Refresh) to seed Nifty 50 / Midcap 150 / Smallcap 250 history.</div> : null}
-          </div>
-        </div>
-      )}
-
-      {result && s && !s.error && (
-        <>
-          <div className="grid3">
-            <div className="card"><div className="stat"><span className={`stat-val ${s.cagr_pct>=0?'acid':'rose'}`}>{pct(s.cagr_pct)}</span><span className="stat-key">CAGR</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val rose">{Number(s.max_drawdown_pct).toFixed(1)}%</span><span className="stat-key">Max Drawdown</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val gold">{Number(s.sharpe).toFixed(2)}</span><span className="stat-key">Sharpe</span></div></div>
-            <div className="card"><div className="stat"><span className={`stat-val ${s.sortino!=null && s.sortino>=0?'acid':'rose'}`}>{s.sortino!=null ? Number(s.sortino).toFixed(2) : '—'}</span><span className="stat-key">Sortino</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val">{s.turnover_annual!=null ? s.turnover_annual+'x' : '—'}</span><span className="stat-key">Turnover / Yr</span></div></div>
-            <div className="card"><div className="stat"><span className={`stat-val ${s.cost_drag_pct!=null && s.cost_drag_pct<8?'acid':'gold'}`}>{s.cost_drag_pct!=null ? s.cost_drag_pct+'%' : '—'}</span><span className="stat-key">Cost Drag</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val">{s.win_rate_pct != null ? s.win_rate_pct+'%' : '—'}</span><span className="stat-key">Win Rate</span></div></div>
-            <div className="card"><div className="stat"><span className={`stat-val ${s.net_return_pct>=0?'acid':'rose'}`}>{pct(s.net_return_pct)}</span><span className="stat-key">Net Return</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val">{fmtRs(s.final_value)}</span><span className="stat-key">Final Value</span></div></div>
-            <div className="card"><div className="stat"><span className={`stat-val ${s.alpha_pct!=null && s.alpha_pct>=0?'acid':'rose'}`}>{s.alpha_pct!=null ? pct(s.alpha_pct) : '—'}</span><span className="stat-key">Alpha vs NIFTY 50</span></div></div>
-            {s.benchmark_cagr_pct!=null && <div className="card"><div className="stat"><span className="stat-val gold">{pct(s.benchmark_cagr_pct)}</span><span className="stat-key">NIFTY CAGR</span></div></div>}
-            {s.universe_alpha_pct!=null && <div className="card"><div className="stat"><span className={`stat-val ${s.universe_alpha_pct>=0?'acid':'rose'}`}>{pct(s.universe_alpha_pct)}</span><span className="stat-key">Alpha vs Universe EW</span></div></div>}
-            {s.universe_cagr_pct!=null && <div className="card"><div className="stat"><span className="stat-val gold">{pct(s.universe_cagr_pct)}</span><span className="stat-key">Universe EW CAGR</span></div></div>}
-          </div>
-
-          <div className="card">
-            <div className="card-hdr"><span className="card-title">Equity Curve</span><span className="note">solid = strategy · dashed gold = NIFTY 50 · dashed sky = Universe EW</span></div>
-            {result.equity_curve.length > 2 ? (
-              <div style={{height:280}}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={(()=>{ const bm=(result.benchmark_curve||[]).reduce((m,p)=>{m[p.date]=p.value;return m;},{}); const uv=(result.universe_curve||[]).reduce((m,p)=>{m[p.date]=p.value;return m;},{}); return result.equity_curve.map(p=>({...p, bench:bm[p.date], uni:uv[p.date]})); })()} margin={{top:8,right:8,bottom:0,left:8}}>
-                    <XAxis dataKey="date" tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} minTickGap={40}/>
-                    <YAxis domain={['auto','auto']} tick={{fill:'#3a445e',fontSize:9,fontFamily:'Geist Mono'}} axisLine={false} tickLine={false} width={70} tickFormatter={v=>v>=100000?'₹'+(v/100000).toFixed(0)+'L':'₹'+v}/>
-                    <Tooltip contentStyle={{backgroundColor:'#0c1120',borderColor:'#161f30',borderRadius:8,fontSize:10,fontFamily:'Geist Mono'}}
-                      formatter={(v,name)=>({Equity:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Equity'],bench:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'NIFTY 50'],uni:['₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}),'Universe EW']}[name]||[v,name])}/>
-                    <Line type="monotone" dataKey="equity" stroke="#00ffa3" strokeWidth={1.8} dot={false}/>
-                    <Line type="monotone" dataKey="bench" stroke="#ffb700" strokeWidth={1.2} strokeDasharray="4 3" dot={false}/>
-                    <Line type="monotone" dataKey="uni" stroke="#3d9eff" strokeWidth={1.2} strokeDasharray="2 3" dot={false}/>
-                    <ReferenceDot x={result.equity_curve[0].date} y={s.initial_capital} r={2} fill="#ffb700"/>
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : <Empty icon="📈" text="Equity curve needs more history — run a scan with ≥2y of prices."/>}
-          </div>
-
-          {result.benchmarks && result.benchmarks.length > 0 && (
-            <div className="card">
-              <div className="card-hdr"><span className="card-title">Alpha vs Indices</span><span className="note">buy-and-hold over the same window — the model must beat the market, not just its own universe</span></div>
-              <div className="tbl-wrap">
-                <table>
-                  <thead><tr><th>Benchmark</th><th className="num">Return</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Sortino</th><th className="num">Alpha</th></tr></thead>
-                  <tbody>
-                    {result.benchmarks.map(b=>(
-                      <tr key={b.name}>
-                        <td style={{color:'var(--t0)',fontWeight:600}}>{b.name}</td>
-                        <td className={`num ${b.return_pct>=0?'up':'dn'}`}>{pct(b.return_pct)}</td>
-                        <td className={`num ${b.cagr_pct>=0?'up':'dn'}`}>{pct(b.cagr_pct)}</td>
-                        <td className="num rose">{Number(b.max_drawdown_pct).toFixed(1)}%</td>
-                        <td className="num gold">{Number(b.sharpe).toFixed(2)}</td>
-                        <td className="num gold">{Number(b.sortino).toFixed(2)}</td>
-                        <td className={`num ${b.alpha_pct>=0?'acid':'rose'}`} style={{fontWeight:700}}>{pct(b.alpha_pct)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          <div className="card">
-            <div className="card-hdr"><span className="card-title">Trades ({result.trades.length})</span></div>
-            {result.trades.length === 0 ? <Empty icon="🔄" text="No trades executed in this window."/> : (
-              <div className="tbl-wrap">
-                <table>
-                  <thead><tr><th>Symbol</th><th>Entry Date</th><th>Exit Date</th><th className="num">Entry</th><th className="num">Exit</th><th className="num">Return</th><th>Exit</th></tr></thead>
-                  <tbody>
-                    {result.trades.slice(-40).reverse().map((t,i)=>(
-                      <tr key={i}>
-                        <td style={{color:'var(--t0)',fontWeight:600}}>{t.symbol.replace('.NS','')}</td>
-                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{t.entry_date}</td>
-                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{t.exit_date}</td>
-                        <td className="num">{fmtRs(t.entry_price)}</td>
-                        <td className="num">{fmtRs(t.exit_price)}</td>
-                        <td className={`num ${t.return_pct>=0?'up':'dn'}`}>{pct(t.return_pct)}</td>
-                        <td><span className={`badge badge-${t.reason==='trailing_stop'?'STRONG':t.reason==='sma50_break'?'WATCHLIST':'ELITE'}`}>{t.reason}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {alphaData && (
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Model Self-Measurement</span><span className="note">forward returns after signals · factor IC (which factor predicts?)</span></div>
-          {alphaData.decay && alphaData.decay.length > 0 ? (
-            <div className="grid3">
-              {alphaData.decay.map(d=>(
-                <div key={d.horizon_days} className="card">
-                  <div className="stat"><span className={`stat-val ${d.avg_return_pct>=0?'acid':'rose'}`}>{pct(d.avg_return_pct)}</span><span className="stat-key">{d.horizon_days}-day forward return · hit {fmt(d.hit_rate_pct,0)}% · n={d.n}</span></div>
-                </div>
-              ))}
-            </div>
-          ) : <div className="note">No measured signals yet — alpha decay fills in after scans and elapsed price history accumulate.</div>}
-          {alphaData.ic && Object.keys(alphaData.ic.factors||{}).length > 0 && (
-            <div className="tbl-wrap" style={{marginTop:12}}>
-              <table>
-                <thead><tr><th>Factor</th><th className="num">Avg IC</th><th className="num">Last IC</th><th className="num">Samples</th><th>Best Regime</th></tr></thead>
-                <tbody>
-                  {Object.entries(alphaData.ic.factors).sort((a,b)=>b[1].avg_ic-a[1].avg_ic).map(([f,info])=>{
-                    const regimes = alphaData.ic.regimes||{};
-                    let best = '—', bestIc = -2;
-                    Object.entries(regimes).forEach(([rg,fm])=>{ if(fm[f]!=null && fm[f]>bestIc){ bestIc=fm[f]; best=rg; } });
-                    return (
-                      <tr key={f}>
-                        <td style={{color:'var(--t0)',fontWeight:600}}>{f}</td>
-                        <td className={`num ${info.avg_ic>0?'up':'dn'}`}>{Number(info.avg_ic).toFixed(3)}</td>
-                        <td className={`num ${info.last_ic>0?'up':'dn'}`}>{Number(info.last_ic).toFixed(3)}</td>
-                        <td className="num">{info.n}</td>
-                        <td>{best!=='—' ? <span className={`badge badge-${best==='BULL'?'MULTIBAGGER':best==='BEAR'?'WATCHLIST':best==='HIGH_VOLATILITY'?'EMERGING':'STRONG'}`}>{best}</span> : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {wf && wf.summary && !wf.summary.error && (
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Walk-Forward · {wf.summary.folds_evaluated} × {wf.summary.fold_months}m folds</span><span className="note">same parameter-free strategy across consecutive windows — flags overfitting / regime dependence</span></div>
-          <div className="grid3">
-            <div className="card"><div className="stat"><span className={`stat-val ${wf.summary.avg_return_pct>=0?'acid':'rose'}`}>{pct(wf.summary.avg_return_pct)}</span><span className="stat-key">Avg Return / Fold</span></div></div>
-            <div className="card"><div className="stat"><span className={`stat-val ${wf.summary.hit_rate_pct>=60?'acid':wf.summary.hit_rate_pct>=40?'gold':'rose'}`}>{fmt(wf.summary.hit_rate_pct,0)}%</span><span className="stat-key">Fold Hit Rate</span></div></div>
-            <div className="card"><div className="stat"><span className="stat-val rose">{fmt(wf.summary.worst_max_drawdown_pct,1)}%</span><span className="stat-key">Worst Fold Drawdown</span></div></div>
-          </div>
-          <div className="tbl-wrap" style={{marginTop:12}}>
-            <table>
-              <thead><tr><th className="num">Fold</th><th>Window</th><th className="num">Return</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Trades</th></tr></thead>
-              <tbody>
-                {wf.folds.map(f=>(
-                  <tr key={f.fold}>
-                    <td style={{color:'var(--t3)',fontFamily:'var(--mono)'}}>#{f.fold}</td>
-                    <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{f.window}</td>
-                    <td className={`num ${f.net_return_pct>=0?'up':'dn'}`}>{pct(f.net_return_pct)}</td>
-                    <td className={`num ${f.cagr_pct>=0?'up':'dn'}`}>{pct(f.cagr_pct)}</td>
-                    <td className="num rose">{fmt(f.max_drawdown_pct,1)}%</td>
-                    <td className="num gold">{fmt(f.sharpe,2)}</td>
-                    <td className="num">{f.trades}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {runs.length > 0 && (
-        <div className="card">
-          <div className="card-hdr"><span className="card-title">Recent Runs</span></div>
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Run</th><th className="num">CAGR</th><th className="num">Max DD</th><th className="num">Sharpe</th><th className="num">Trades</th><th>Params</th></tr></thead>
-              <tbody>
-                {runs.map(r=>(
-                  <tr key={r.id} style={{cursor:'pointer'}} onClick={()=>setResult(r)}>
-                    <td style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>#{r.id}</td>
-                    <td className={`num ${r.summary.cagr_pct>=0?'up':'dn'}`}>{r.summary.cagr_pct!=null ? pct(r.summary.cagr_pct) : '—'}</td>
-                    <td className="num rose">{r.summary.max_drawdown_pct!=null ? r.summary.max_drawdown_pct+'%' : '—'}</td>
-                    <td className="num gold">{r.summary.sharpe!=null ? r.summary.sharpe : '—'}</td>
-                    <td className="num">{r.summary.trades!=null ? r.summary.trades : '—'}</td>
-                    <td style={{fontFamily:'var(--mono)',color:'var(--t3)',fontSize:9}}>{r.params ? `${r.params.years}y top${r.params.top_n} stop${r.params.trailing_stop_pct}` : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── IDEAS (watchlist intelligence feed) ────────────────────────────────── */
-const EVENT_STYLE = {
-  RS_LEADER:   {cls:'STRONG',     label:'RS Leader'},
-  SCORE_SURGE: {cls:'EMERGING',   label:'Score Surge'},
-  MB_ELITE:    {cls:'MULTIBAGGER',label:'MB Elite'},
-  SECTOR_TOP3: {cls:'WATCHLIST',  label:'Sector Top-3'},
-};
+/* ── IDEAS ────────────────────────────────────────────────────────────── */
+const EVENT_STYLE = {RS_LEADER:{cls:"STRONG",label:"RS Leader"},SCORE_SURGE:{cls:"EMERGING",label:"Score Surge"},MB_ELITE:{cls:"MULTIBAGGER",label:"MB Elite"},SECTOR_TOP3:{cls:"WATCHLIST",label:"Sector Top-3"}};
 function Ideas(){
   const [events,setEvents] = useState([]);
-  const [filter,setFilter] = useState('ALL');
-  const [q,setQ] = useState('');
+  const [filter,setFilter] = useState("ALL");
+  const [q,setQ] = useState("");
   const [explain,setExplain] = useState(null);
-  const load = useCallback(()=>{ j('/api/events?limit=250').then(d=>setEvents(d||[])).catch(()=>{}); },[]);
+  const load = useCallback(()=>{ j("/api/events?limit=250").then(d=>setEvents(d||[])).catch(()=>{}); },[]);
   useEffect(load,[load]);
-  const counts = {};
-  events.forEach(e=>{ counts[e.event] = (counts[e.event]||0)+1; });
-  const types = ['ALL', ...Object.keys(counts).sort()];
-  const shown = events.filter(e=>
-    (filter==='ALL' || e.event===filter) &&
-    (!q || (e.symbol||'').includes(q.trim().toUpperCase()))
-  );
-  const byDate = {};
-  shown.forEach(e=>{ (byDate[e.scan_date] = byDate[e.scan_date] || []).push(e); });
+  const counts = {}; events.forEach(e=>{ counts[e.event]=(counts[e.event]||0)+1; });
+  const types = ["ALL",...Object.keys(counts).sort()];
+  const shown = events.filter(e=>(filter==="ALL"||e.event===filter)&&(!q||(e.symbol||"").includes(q.trim().toUpperCase())));
+  const byDate = {}; shown.forEach(e=>{ (byDate[e.scan_date]=byDate[e.scan_date]||[]).push(e); });
   return (
-    <div className="wrap anim">
-      <div style={{display:'flex',alignItems:'baseline',gap:12}}>
-        <div><div className="screen-title">Ideas</div><div className="screen-sub">watchlist intelligence — the daily idea generator · click any event for the full "why"</div></div>
-        <div className="note" style={{marginLeft:'auto'}}>{events.length} events · {Object.keys(counts).map(t=>t+': '+counts[t]).join(' · ')}</div>
+    <div className="content-scroll anim">
+      <div style={{display:"flex",alignItems:"baseline",gap:12}}>
+        <div><div className="screen-title">Ideas</div><div className="screen-sub">Watchlist intelligence</div></div>
       </div>
-
       <div className="card">
         <div className="filter-row">
-          <label>Type
-            <select value={filter} onChange={e=>setFilter(e.target.value)}>
-              {types.map(t=> <option key={t} value={t}>{t==='ALL' ? 'All events' : (EVENT_STYLE[t]?EVENT_STYLE[t].label:t)} ({t==='ALL'?events.length:(counts[t]||0)})</option>)}
-            </select>
-          </label>
-          <label>Symbol
-            <input placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)}/>
-          </label>
+          <label>Type<select value={filter} onChange={e=>setFilter(e.target.value)}>{types.map(t=><option key={t} value={t}>{t==="ALL"?'All events':(EVENT_STYLE[t]?EVENT_STYLE[t].label:t)}</option>)}</select></label>
+          <label>Symbol<input placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)}/></label>
           <button className="btn-ghost" onClick={load}>⟳ Reload</button>
         </div>
-        {shown.length === 0 ? <div className="note">No events yet — consecutive scans surface RS leaders, score surges, MB elites and top-ranked sectors.</div> : (
+        {shown.length===0?<div className="note">No events yet.</div>:(
           Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,rows])=>(
             <div key={date} style={{marginTop:10}}>
-              <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginBottom:6}}>{date} · {rows.length} events</div>
-              <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                {rows.map((e,i)=>(
-                  <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:8,cursor:'pointer'}} onClick={()=>setExplain(e.symbol)}>
-                    <span className={`badge badge-${(EVENT_STYLE[e.event]||{cls:'ELITE'}).cls}`}>{(EVENT_STYLE[e.event]||{label:e.event}).label}</span>
-                    <span style={{color:'var(--t0)',fontWeight:700}}>{e.symbol.replace('.NS','')}</span>
-                    <span style={{color:'var(--t2)',flex:1}}>{e.detail}</span>
-                    <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--sky)'}}>explain ▸</span>
-                  </div>
-                ))}
+              <div style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--t3)",marginBottom:6}}>{date} · {rows.length} events</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {rows.map((e,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"var(--bg2)",border:"1px solid var(--wire)",borderRadius:8,cursor:"pointer"}} onClick={()=>setExplain(e.symbol)}>
+                  <span className={}>{(EVENT_STYLE[e.event]||{label:e.event}).label}</span>
+                  <span style={{color:"var(--t0)",fontWeight:700}}>{e.symbol.replace(".NS","")}</span>
+                  <span style={{color:"var(--t2)",flex:1}}>{e.detail}</span>
+                </div>))}
               </div>
             </div>
           ))
@@ -1594,29 +957,171 @@ function Ideas(){
   );
 }
 
+/* ── PORTFOLIO ───────────────────────────────────────────────────────── */
+function Portfolio(){
+  const [alloc,setAlloc] = useState(null);
+  useEffect(()=>{ j("/api/portfolio").then(setAlloc).catch(()=>{}); },[]);
+  return (
+    <div className="content-scroll anim">
+      <div><div className="screen-title">Portfolio</div><div className="screen-sub">Suggested allocation · Kelly-Lite sizing</div></div>
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Suggested Allocation</span></div>
+        {!alloc ? <Loader/> : alloc.allocation.length === 0 ? <div className="note">Run a scan first.</div> : (
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th className="num">Score</th><th>Bucket</th><th className="num">Weight</th></tr></thead>
+            <tbody>{alloc.allocation.map((a,i)=>(<tr key={a.symbol}>
+              <td style={{color:"var(--t3)",fontFamily:"var(--mono)"}}>{i+1}</td>
+              <td style={{color:"var(--t0)",fontWeight:600}}>{a.symbol.replace(".NS","")}</td>
+              <td style={{color:"var(--t2)"}}>{a.sector}</td>
+              <td className="num"><ScoreCell score={a.pos_score}/></td>
+              <td><Bucket b={a.mb_bucket}/></td>
+              <td className="num" style={{fontWeight:600}}>{a.weight_pct}%</td>
+            </tr>))}</tbody>
+          </table></div>
+        )}
+      </div>
+      {alloc && alloc.portfolio_risk && alloc.portfolio_risk.n && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Portfolio Risk</span></div>
+          <div style={{display:"flex",gap:28,flexWrap:"wrap",alignItems:"center"}}>
+            <div className="stat"><span className={} style={{fontSize:22}}>{alloc.portfolio_risk.risk_grade}</span><span className="stat-key">Risk Grade</span></div>
+            <div className="stat"><span className="stat-val">{alloc.portfolio_risk.portfolio_vol!=null?alloc.portfolio_risk.portfolio_vol+'%':'—'}</span><span className="stat-key">Portfolio Vol</span></div>
+            <div className="stat"><span className="stat-val">{alloc.portfolio_risk.hhi}</span><span className="stat-key">HHI</span></div>
+            <div className="stat"><span className="stat-val">{alloc.portfolio_risk.cash_pct}%</span><span className="stat-key">Cash</span></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── BACKTEST ─────────────────────────────────────────────────────────── */
+function Backtest(){
+  const [params,setParams] = useState({years:"3",top_n:"10",initial:"1000000",stop:"0.20",cost:"0.25"});
+  const [result,setResult] = useState(null);
+  const [runs,setRuns] = useState([]);
+  const [running,setRunning] = useState(false);
+  const [err,setErr] = useState(null);
+  useEffect(()=>{ j("/api/backtests?limit=5").then(setRuns).catch(()=>{}); },[]);
+  const run = async ()=>{
+    setRunning(true); setErr(null); setResult(null);
+    try {
+      const r = await j("/api/backtest",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({years:parseInt(params.years)||3,top_n:parseInt(params.top_n)||10,initial_capital:parseFloat(params.initial)||1000000,trailing_stop_pct:parseFloat(params.stop)||0.2,cost_pct:parseFloat(params.cost)||0.25})});
+      setResult(r); j("/api/backtests?limit=5").then(setRuns).catch(()=>{});
+    } catch(e){ setErr(e.detail||e.message); }
+    finally{ setRunning(false); }
+  };
+  const set = k => e => setParams({...params,[k]:e.target.value});
+  const s = result ? result.summary : null;
+  const [wf,setWf] = useState(null);
+  const [wfRunning,setWfRunning] = useState(false);
+  const runWF = async ()=>{
+    setWfRunning(true); setWf(null);
+    try{ const r = await j("/api/backtest/walk-forward",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fold_months:12,folds:3,top_n:parseInt(params.top_n)||10,initial_capital:parseFloat(params.initial)||1000000,trailing_stop_pct:parseFloat(params.stop)||0.2})}); setWf(r); }
+    catch(e){} finally{ setWfRunning(false); }
+  };
+  return (
+    <div className="content-scroll anim">
+      <div><div className="screen-title">Backtest</div><div className="screen-sub">Momentum + trend · monthly rebalance · trailing stop · walk-forward</div></div>
+      <div className="card"><div className="filter-row">
+        <label>Years<input type="number" min="1" max="10" value={params.years} onChange={set("years")}/></label>
+        <label>Top N<input type="number" min="1" max="30" value={params.top_n} onChange={set("top_n")}/></label>
+        <label>Capital (₹)<input type="number" value={params.initial} onChange={set("initial")}/></label>
+        <label>Stop %<input type="number" step="0.05" value={params.stop} onChange={set("stop")}/></label>
+        <label>Cost %<input type="number" step="0.05" value={params.cost} onChange={set("cost")}/></label>
+        <button className="btn" disabled={running} onClick={run}>{running?'Running…':'▶ Run'}</button>
+        <button className="btn-ghost" disabled={running||wfRunning} onClick={runWF}>{wfRunning?'Running…':'⇄ Walk-Forward'}</button>
+      </div></div>
+      {err && <div className="note" style={{color:"var(--rose)",marginTop:10}}>{err}</div>}
+      {result && s && !s.error && (<>
+        <div className="grid3">
+          <div className="card"><div className="stat"><span className={}>{pct(s.cagr_pct)}</span><span className="stat-key">CAGR</span></div></div>
+          <div className="card"><div className="stat"><span className="stat-val rose">{Number(s.max_drawdown_pct).toFixed(1)}%</span><span className="stat-key">Max Drawdown</span></div></div>
+          <div className="card"><div className="stat"><span className="stat-val gold">{Number(s.sharpe).toFixed(2)}</span><span className="stat-key">Sharpe</span></div></div>
+          <div className="card"><div className="stat"><span className="stat-val">{s.win_rate_pct!=null?s.win_rate_pct+'%':'—'}</span><span className="stat-key">Win Rate</span></div></div>
+          <div className="card"><div className="stat"><span className={}>{pct(s.net_return_pct)}</span><span className="stat-key">Net Return</span></div></div>
+          <div className="card"><div className="stat"><span className="stat-val">{fmtRs(s.final_value)}</span><span className="stat-key">Final Value</span></div></div>
+        </div>
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Equity Curve</span></div>
+          {result.equity_curve.length > 2 ? (
+            <div style={{height:280}}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={result.equity_curve} margin={{top:8,right:8,bottom:0,left:8}}>
+                  <XAxis dataKey="date" tick={{fill:"var(--t3)",fontSize:9,fontFamily:"var(--mono)"}} axisLine={false} tickLine={false} minTickGap={40}/>
+                  <YAxis domain={["auto","auto"]} tick={{fill:"var(--t3)",fontSize:9,fontFamily:"var(--mono)"}} axisLine={false} tickLine={false} width={70} tickFormatter={v=>v>=100000?'₹'+(v/100000).toFixed(0)+'L':'₹'+v}/>
+                  <Tooltip contentStyle={{backgroundColor:"var(--bg1)",borderColor:"var(--wire)",borderRadius:8,fontSize:10,fontFamily:"var(--mono)"}}/>
+                  <Line type="monotone" dataKey="equity" stroke="#7c3aed" strokeWidth={2} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <Empty icon="📈" text="Need more history."/>}
+        </div>
+        {result.trades.length > 0 && (
+          <div className="card">
+            <div className="card-hdr"><span className="card-title">Trades ({result.trades.length})</span></div>
+            <div className="tbl-wrap"><table>
+              <thead><tr><th>Symbol</th><th>Entry</th><th>Exit</th><th className="num">Return</th><th>Reason</th></tr></thead>
+              <tbody>{result.trades.slice(-20).reverse().map((t,i)=>(<tr key={i}>
+                <td style={{color:"var(--t0)",fontWeight:600}}>{t.symbol.replace(".NS","")}</td>
+                <td style={{fontFamily:"var(--mono)",color:"var(--t2)"}}>{t.entry_date}</td>
+                <td style={{fontFamily:"var(--mono)",color:"var(--t2)"}}>{t.exit_date}</td>
+                <td className={}>{pct(t.return_pct)}</td>
+                <td><span className="badge badge-WATCHLIST" style={{fontSize:8}}>{t.reason}</span></td>
+              </tr>))}</tbody>
+            </table></div>
+          </div>
+        )}
+      </>)}
+      {wf && wf.summary && !wf.summary.error && (
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">Walk-Forward · {wf.summary.folds_evaluated} folds</span></div>
+          <div className="grid3">
+            <div className="card"><div className="stat"><span className={}>{pct(wf.summary.avg_return_pct)}</span><span className="stat-key">Avg Return</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val gold">{fmt(wf.summary.hit_rate_pct,0)}%</span><span className="stat-key">Hit Rate</span></div></div>
+            <div className="card"><div className="stat"><span className="stat-val rose">{fmt(wf.summary.worst_max_drawdown_pct,1)}%</span><span className="stat-key">Worst DD</span></div></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── APP ──────────────────────────────────────────────────────────────── */
 function App(){
-  const [tab,setTab] = useState('Dashboard');
+  const [tab,setTab] = useState("Overview");
   const [regime,setRegime] = useState(null);
-  useEffect(()=>{ j('/api/regime').then(setRegime).catch(()=>{}); },[]);
+  const [signalFilter,setSignalFilter] = useState("ALL");
+  const [topPicks,setTopPicks] = useState([]);
+  useEffect(()=>{ j("/api/regime").then(setRegime).catch(()=>{}); j("/api/dashboard").then(d=>setTopPicks(d.top_picks||[])).catch(()=>{}); },[]);
+  const mapTab = t => {
+    const m = {"Overview":"Dashboard","Market Intelligence":"Dashboard","Opportunities":"Screener","Elite Picks":"Elite Picks","Discovery":"Discovery","Research":"Research","Regime":"Research","Ideas":"Ideas","Portfolio":"Portfolio","Backtest":"Backtest"};
+    return m[t] || "Dashboard";
+  };
+  const screen = mapTab(tab);
   return (
     <>
       <Nav tab={tab} setTab={setTab} regime={regime}/>
-      <div className="body">
-        {tab==='Dashboard' && <Dashboard/>}
-        {tab==='Screener' && <Screener/>}
-        {tab==='Elite Picks' && <ElitePicks/>}
-        {tab==='Discovery' && <Discovery/>}
-        {tab==='Research' && <Research/>}
-        {tab==='Ideas' && <Ideas/>}
-        {tab==='Portfolio' && <Portfolio/>}
-        {tab==='Backtest' && <Backtest/>}
+      <TickerStrip topPicks={topPicks}/>
+      <div className="main-layout">
+        <Sidebar tab={tab} setTab={setTab} regime={regime} signalFilter={signalFilter} setSignalFilter={setSignalFilter}/>
+        <div className="content">
+          {screen==='Dashboard' && <Dashboard signalFilter={signalFilter}/>}
+          {screen==='Screener' && <Screener/>}
+          {screen==='Elite Picks' && <ElitePicks/>}
+          {screen==='Discovery' && <Discovery/>}
+          {screen==='Research' && <Research/>}
+          {screen==='Ideas' && <Ideas/>}
+          {screen==='Portfolio' && <Portfolio/>}
+          {screen==='Backtest' && <Backtest/>}
+        </div>
       </div>
     </>
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
