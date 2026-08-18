@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — scan pipeline.
+Sovereign Lite v15 — scan pipeline.
 
     fetch prices → persist → fetch fundamentals (cached) → regime detection
     → score all symbols → rank → multibagger detect → persist scores
@@ -16,7 +16,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from . import alpha, data, db, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring, watchlist
+from . import alpha, data, db, delivery, indicators, multibagger, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .universe import default_universe, discovery_universe
 
 
@@ -63,6 +63,25 @@ def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
         data.refresh_benchmarks()
     except Exception as exc:
         print(f"  ⚠️ benchmark refresh failed: {exc}")
+
+    # Quarterly revision tracking: when a new reported quarter appears, log the
+    # qoq revenue/PAT change as an UPGRADE / DOWNGRADE / MIXED revision event.
+    # No analyst estimates — this is reported-results momentum, honestly named.
+    try:
+        n_rev = _track_quarterly_revisions(symbols)
+        if n_rev:
+            print(f"[lite] quarterly revisions: {n_rev} events")
+    except Exception as exc:
+        print(f"  ⚠️ quarterly revisions failed: {exc}")
+
+    # NSE delivery position (accumulation/distribution). Best-effort with a
+    # short timeout so a blocked NSE archive can never stall the scan.
+    try:
+        dl = delivery.refresh_delivery(max_days_back=2, timeout=8)
+        if dl.get("status") == "ok":
+            print(f"[lite] delivery: {dl['rows']} rows for {dl['date']}")
+    except Exception as exc:
+        print(f"  ⚠️ delivery refresh failed: {exc}")
 
     nifty = data.fetch_benchmark("^NSEI")
     vix = data.fetch_benchmark("^INDIAVIX")
@@ -125,6 +144,32 @@ def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
     except Exception as exc:
         print(f"  ⚠️ allocation baseline failed: {exc}")
 
+    # Long-format factor history (symbol, scan_date, factor, value) — the
+    # clean research table for future factor studies (user's deferred item).
+    try:
+        today = date.today().isoformat()
+        for r in mb_records:
+            db.save_factor_scores(
+                r["symbol"],
+                today,
+                {
+                    "score": r.get("score"),
+                    "quality": r.get("quality"),
+                    "growth": r.get("growth"),
+                    "momentum": r.get("momentum"),
+                    "valuation": r.get("valuation"),
+                    "risk": r.get("risk"),
+                    "revision_score": r.get("revision_score"),
+                    "rs_rank": r.get("rs_rank"),
+                    "mb_score": r.get("mb_score"),
+                    "opp_score": r.get("opp_score"),
+                    "pos_score": r.get("pos_score"),
+                    "data_confidence": r.get("data_confidence"),
+                },
+            )
+    except Exception as exc:
+        print(f"  ⚠️ factor_scores write failed: {exc}")
+
     # Score history: compare against the previous snapshot, then append this one.
     prev = db.latest_score_snapshot()
     db.upsert_scores(mb_records)
@@ -167,3 +212,47 @@ def run_scan(force_fundamentals: bool = False, tier: str = "core") -> dict:
         "duration_sec": duration,
         "timestamp": regime["timestamp"],
     }
+
+
+def _track_quarterly_revisions(symbols: list[str]) -> int:
+    """Log revision events for newly-reported quarters (qoq revenue/PAT)."""
+    events = []
+    today = date.today().isoformat()
+    for sym in symbols:
+        qs = db.load_quarterly_results(sym, limit=8)
+        if len(qs) < 2:
+            continue
+        latest = qs[-1]
+        prev = qs[-2]
+        last_tracked = db.latest_revision_period(sym)
+        if last_tracked and latest["period_end"] <= last_tracked:
+            continue
+        rev = net = None
+        if latest.get("revenue") is not None and prev.get("revenue") and prev["revenue"] > 0:
+            rev = (latest["revenue"] / prev["revenue"] - 1.0) * 100.0
+        if latest.get("net_income") is not None and prev.get("net_income") and prev["net_income"] > 0:
+            net = (latest["net_income"] / prev["net_income"] - 1.0) * 100.0
+        if rev is None and net is None:
+            continue
+        direction = "MIXED"
+        if rev is not None and net is not None:
+            if net > 0 and rev > 0:
+                direction = "UPGRADE"
+            elif net < 0 and rev < 0:
+                direction = "DOWNGRADE"
+        elif net is not None:
+            direction = "UPGRADE" if net > 0 else "DOWNGRADE"
+        events.append(
+            {
+                "symbol": sym,
+                "period_end": latest["period_end"],
+                "scan_date": today,
+                "revenue_qoq_pct": round(rev, 1) if rev is not None else None,
+                "net_income_qoq_pct": round(net, 1) if net is not None else None,
+                "direction": direction,
+                "is_first_seen": not last_tracked,
+            }
+        )
+    if events:
+        db.save_quarterly_revisions(events)
+    return len(events)

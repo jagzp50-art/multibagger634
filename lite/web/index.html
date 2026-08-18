@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v14</title>
+<title>Sovereign Lite v15</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -169,14 +169,14 @@ function Empty({icon,text,children}){ return <div className="empty"><div classNa
 
 /* ── NAV ─────────────────────────────────────────────────────────────── */
 function Nav({tab,setTab,regime}){
-  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Research','Portfolio','Backtest'];
+  const tabs = ['Dashboard','Screener','Elite Picks','Discovery','Research','Ideas','Portfolio','Backtest'];
   const vix = regime && regime.vix;
   const vixClass = !vix ? 'warn' : vix >= 25 ? 'risk' : vix >= 20 ? 'warn' : 'safe';
   return (
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v14 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v15 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -197,7 +197,15 @@ function Dashboard(){
   const [err,setErr] = useState(null);
   const [scanning,setScanning] = useState(false);
   const [scanResult,setScanResult] = useState(null);
-  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); },[load]);
+  const [delivery,setDelivery] = useState(null);
+  const [delBusy,setDelBusy] = useState(false);
+  const refreshDel = async ()=>{
+    setDelBusy(true);
+    try { await j('/api/delivery/refresh', {method:'POST'}); } catch {}
+    j('/api/delivery').then(setDelivery).catch(()=>{});
+    setDelBusy(false);
+  };
+  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); j('/api/delivery').then(setDelivery).catch(()=>{}); },[load]);
   useEffect(load,[load]);
 
   const runScan = async (force, tier='core')=>{
@@ -334,6 +342,27 @@ function Dashboard(){
             </div>
           )}
           <div className="note" style={{marginTop:12}}>{data.breadth && data.breadth.market_health!=null ? (data.breadth.market_health>=60 ? 'Broad participation — confirms an index-level bull.' : data.breadth.market_health>=45 ? 'Mixed tape — index strength not confirmed by breadth.' : 'Weak breadth — the index is being led by a few names.') : ''}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-hdr"><span className="card-title">NSE Delivery</span><span className="note">daily delivery position · accumulation signal</span>
+            <button className="btn-ghost" style={{marginLeft:'auto'}} disabled={delBusy} onClick={refreshDel}>{delBusy ? 'Fetching…' : '⟳ Refresh'}</button>
+          </div>
+          {!delivery ? <div className="note">Delivery tracking on — paste SCRAPERAPI_KEY into API Keys if the NSE archive blocks the refresh.</div> : delivery.accumulators.length === 0 ? (
+            <div className="note">No delivery data yet{delivery.latest_date ? ' (latest: '+delivery.latest_date+')' : ''} — hit ⟳ Refresh to pull the latest session.</div>
+          ) : (
+            <div>
+              <div className="note" style={{marginBottom:8}}>Latest session {delivery.latest_date} · {delivery.coverage[delivery.latest_date] ? delivery.coverage[delivery.latest_date].n+' names, avg '+delivery.coverage[delivery.latest_date].avg_pct+'% delivery' : ''}</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {delivery.accumulators.map(a=>(
+                  <span key={a.symbol} style={{fontFamily:'var(--mono)',fontSize:9,padding:'4px 8px',borderRadius:6,background:'var(--bg2)',border:'1px solid var(--wire)',color:'var(--t1)'}}>
+                    <span style={{color:'var(--t0)',fontWeight:700}}>{a.symbol.replace('.NS','')}</span> · {a.delivery_pct!=null?fmt(a.delivery_pct,0)+'% del':'—'}
+                    {a.delivery_score!=null && <span className={a.delivery_score>=65?' up':' dn'}> · acc {fmt(a.delivery_score,0)}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card">
@@ -713,10 +742,11 @@ function Discovery(){
 function Research(){
   const [fdata,setFdata] = useState(null);
   const [rdata,setRdata] = useState(null);
+  const [revs,setRevs] = useState([]);
   const [err,setErr] = useState(null);
   const load = useCallback(()=>{
-    Promise.all([j('/api/research/factors'), j('/api/research/regimes')])
-      .then(([f,r])=>{ setFdata(f); setRdata(r); })
+    Promise.all([j('/api/research/factors'), j('/api/research/regimes'), j('/api/revisions?limit=80')])
+      .then(([f,r,v])=>{ setFdata(f); setRdata(r); setRevs(v||[]); })
       .catch(e=>setErr(e.message));
   },[load]);
   useEffect(load,[load]);
@@ -792,6 +822,29 @@ function Research(){
         </div>
       </div>
 
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Earnings Revisions</span><span className="note">reported-quarter momentum · revenue/PAT qoq · free-data proxy, no analyst estimates</span></div>
+        {revs.length === 0 ? <div className="note">No revision events yet — logged when a new reported quarter appears on a scan.</div> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Symbol</th><th>Quarter</th><th>Direction</th><th className="num">Revenue qoq</th><th className="num">PAT qoq</th><th></th></tr></thead>
+              <tbody>
+                {revs.slice(0,25).map((v,i)=>(
+                  <tr key={i}>
+                    <td style={{color:'var(--t0)',fontWeight:600}}>{v.symbol.replace('.NS','')}</td>
+                    <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{v.period_end}</td>
+                    <td><span className={`badge badge-${v.direction==='UPGRADE'?'MULTIBAGGER':v.direction==='DOWNGRADE'?'WATCHLIST':'EMERGING'}`}>{v.direction}</span></td>
+                    <td className={`num ${v.revenue_qoq_pct!=null ? (v.revenue_qoq_pct>=0?'up':'dn') : ''}`}>{v.revenue_qoq_pct!=null ? pct(v.revenue_qoq_pct) : '—'}</td>
+                    <td className={`num ${v.net_income_qoq_pct!=null ? (v.net_income_qoq_pct>=0?'up':'dn') : ''}`}>{v.net_income_qoq_pct!=null ? pct(v.net_income_qoq_pct) : '—'}</td>
+                    <td>{v.is_first_seen ? <span className="badge badge-STRONG">NEW</span> : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="note" style={{opacity:0.7}}>Updated {fdata.updated ? new Date(fdata.updated).toLocaleString('en-IN') : '—'} · honest by design: empty until scans + elapsed history accumulate.</div>
     </div>
   );
@@ -810,16 +863,36 @@ function Portfolio(){
   const [err,setErr] = useState(null);
   const [rebal,setRebal] = useState(null);
   const [rebalLoading,setRebalLoading] = useState(false);
+  const [runs,setRuns] = useState([]);
+  const [budgets,setBudgets] = useState({});
+  const [budgetMsg,setBudgetMsg] = useState(null);
 
   const loadRebal = ()=>{
     setRebalLoading(true);
     j('/api/rebalance?top_n=8&mode=kelly&max_sector_weight=25', {method:'POST'}).then(setRebal).catch(()=>{}).finally(()=>setRebalLoading(false));
+    j('/api/rebalance/runs?limit=6').then(setRuns).catch(()=>{});
+  };
+  const applyRun = async (id)=>{
+    if (!confirm('Mark this plan as applied? The target book becomes the next baseline.')) return;
+    try { await j('/api/rebalance/'+id+'/apply', {method:'POST'}); j('/api/rebalance/runs?limit=6').then(setRuns).catch(()=>{}); }
+    catch(e){ alert(e.message || 'apply failed'); }
+  };
+  const saveBudgets = async ()=>{
+    const cleaned = {};
+    Object.entries(budgets).forEach(([k,v])=>{ const f = parseFloat(v); if (!isNaN(f) && f>0) cleaned[k]=f; });
+    try {
+      const r = await j('/api/sector-budgets', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cleaned)});
+      setBudgetMsg('Saved — '+(r.saved||0)+' budgets');
+      setTimeout(()=>setBudgetMsg(null), 4000);
+      j('/api/portfolio').then(setAlloc).catch(()=>{});
+    } catch(e){ setBudgetMsg('Save failed: '+(e.message||'')); }
   };
 
   useEffect(()=>{ localStorage.setItem(HOLDINGS_KEY, JSON.stringify(holdings)); },[holdings]);
   useEffect(()=>{ j('/api/universe').then(u=>setUniverse(u.map(x=>x.symbol))).catch(()=>{}); },[]);
   useEffect(()=>{ j('/api/portfolio').then(setAlloc).catch(()=>{}); },[]);
   useEffect(()=>{ loadRebal(); },[]);
+  useEffect(()=>{ if (alloc && alloc.sector_budgets) setBudgets(prev=>({...prev, ...alloc.sector_budgets})); },[alloc]);
   useEffect(()=>{
     if (!holdings.length) { setQuotes({}); return; }
     let live = true;
@@ -888,6 +961,7 @@ function Portfolio(){
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:12}} className="grid2">
               <div>
                 <div className="card-title" style={{marginBottom:8}}>Sector Weights · cap {alloc.max_sector_weight != null ? alloc.max_sector_weight : 25}%</div>
+                <div style={{marginBottom:8}} className="note">Per-sector budgets (empty = global cap):</div>
                 <div style={{display:'flex',flexDirection:'column',gap:5}}>
                   {Object.entries(alloc.sector_weights||{}).sort((a,b)=>b[1]-a[1]).map(([s,w])=>{
                     const cap = alloc.max_sector_weight || 25;
@@ -901,6 +975,19 @@ function Portfolio(){
                       </div>
                     );
                   })}
+                </div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
+                  {Object.keys(alloc.sector_weights||{}).map(sec=>(
+                    <label key={sec} style={{display:'flex',alignItems:'center',gap:4,fontSize:9,fontFamily:'var(--mono)',color:'var(--t2)'}}>
+                      {sec.replace(/ .*$/,'')}
+                      <input type="number" min="0" max="40" step="1" value={budgets[sec]!=null ? budgets[sec] : ''}
+                        placeholder={(alloc.max_sector_weight||25).toString()}
+                        onChange={e=>setBudgets({...budgets, [sec]: e.target.value})}
+                        style={{width:42,padding:'3px 5px',background:'var(--bg0)',border:'1px solid var(--wire)',borderRadius:5,color:'var(--t0)',fontFamily:'var(--mono)',fontSize:9}}/>
+                    </label>
+                  ))}
+                  <button className="btn-ghost" style={{padding:'4px 10px',fontSize:9}} onClick={saveBudgets}>Save budgets</button>
+                  {budgetMsg && <span style={{fontSize:9,color:'var(--acid)',fontFamily:'var(--mono)'}}>{budgetMsg}</span>}
                 </div>
               </div>
               <div>
@@ -979,6 +1066,45 @@ function Portfolio(){
               </table>
             </div>
             <div className="note" style={{marginTop:8}}>Anti-churn by design: names still in top-N with drift under ±2% are HOLD — a winner is never sold just to be re-bought.</div>
+
+            {rebal.plan.cash_plan && (
+              <div style={{marginTop:12,padding:'10px 12px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:10}}>
+                <div className="card-title" style={{fontSize:10,marginBottom:6}}>Cash Plan · {rebal.plan.cash_plan.target_cash_pct}% target cash ({rebal.plan.cash_plan.base_cash_pct}% regime + {rebal.plan.cash_plan.extra_buffer}% buffer)</div>
+                {rebal.plan.cash_plan.reasons.map((r,i)=><div key={i} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--gold)'}}>▸ {r}</div>)}
+                {rebal.plan.cash_plan.wait_for_pullback.length>0 && <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)',marginTop:4}}>Wait for pullback: {rebal.plan.cash_plan.wait_for_pullback.map(x=>x.replace('.NS','')).join(', ')} (RS≥95 but score<72)</div>}
+                {rebal.plan.cash_plan.capped_liquidity.length>0 && <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginTop:2}}>Thin liquidity, size carefully: {rebal.plan.cash_plan.capped_liquidity.map(x=>x.replace('.NS','')).join(', ')}</div>}
+                <div style={{display:'flex',gap:14,marginTop:6,fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>
+                  {rebal.plan.cash_plan.deploy_schedule.map(d=>(
+                    <span key={d.phase}>{d.phase}: {d.pct}% — {d.trigger}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:'flex',alignItems:'center',gap:10,marginTop:12}}>
+              <button className="btn" style={{padding:'6px 14px',fontSize:10}} disabled={!rebal.run_id} onClick={()=>applyRun(rebal.run_id)}>✓ Mark Applied</button>
+              <span className="note">Apply only after you've executed the trades — the target book becomes the next scan's baseline.</span>
+            </div>
+
+            {runs.length > 0 && (
+              <div className="tbl-wrap" style={{marginTop:12}}>
+                <table>
+                  <thead><tr><th>Run</th><th>Created</th><th className="num">Turnover</th><th className="num">Tax</th><th className="num">Drag</th><th>State</th></tr></thead>
+                  <tbody>
+                    {runs.map(r=>(
+                      <tr key={r.id}>
+                        <td style={{fontFamily:'var(--mono)',color:'var(--t3)'}}>#{r.id}</td>
+                        <td style={{fontFamily:'var(--mono)',color:'var(--t2)'}}>{new Date(r.created_at).toLocaleString('en-IN')}</td>
+                        <td className="num">{r.plan && r.plan.turnover_pct!=null ? r.plan.turnover_pct+'%' : '—'}</td>
+                        <td className="num">{r.plan && r.plan.total_tax!=null ? fmtRs(r.plan.total_tax) : '—'}</td>
+                        <td className="num">{r.plan && r.plan.total_drag_pct!=null ? r.plan.total_drag_pct+'%' : '—'}</td>
+                        <td>{r.applied ? <span className="badge badge-STRONG">APPLIED</span> : <span className="badge badge-WATCHLIST">PLANNED</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1310,6 +1436,71 @@ function Backtest(){
   );
 }
 
+/* ── IDEAS (watchlist intelligence feed) ────────────────────────────────── */
+const EVENT_STYLE = {
+  RS_LEADER:   {cls:'STRONG',     label:'RS Leader'},
+  SCORE_SURGE: {cls:'EMERGING',   label:'Score Surge'},
+  MB_ELITE:    {cls:'MULTIBAGGER',label:'MB Elite'},
+  SECTOR_TOP3: {cls:'WATCHLIST',  label:'Sector Top-3'},
+};
+function Ideas(){
+  const [events,setEvents] = useState([]);
+  const [filter,setFilter] = useState('ALL');
+  const [q,setQ] = useState('');
+  const [explain,setExplain] = useState(null);
+  const load = useCallback(()=>{ j('/api/events?limit=250').then(d=>setEvents(d||[])).catch(()=>{}); },[]);
+  useEffect(load,[load]);
+  const counts = {};
+  events.forEach(e=>{ counts[e.event] = (counts[e.event]||0)+1; });
+  const types = ['ALL', ...Object.keys(counts).sort()];
+  const shown = events.filter(e=>
+    (filter==='ALL' || e.event===filter) &&
+    (!q || (e.symbol||'').includes(q.trim().toUpperCase()))
+  );
+  const byDate = {};
+  shown.forEach(e=>{ (byDate[e.scan_date] = byDate[e.scan_date] || []).push(e); });
+  return (
+    <div className="wrap anim">
+      <div style={{display:'flex',alignItems:'baseline',gap:12}}>
+        <div><div className="screen-title">Ideas</div><div className="screen-sub">watchlist intelligence — the daily idea generator · click any event for the full "why"</div></div>
+        <div className="note" style={{marginLeft:'auto'}}>{events.length} events · {Object.keys(counts).map(t=>t+': '+counts[t]).join(' · ')}</div>
+      </div>
+
+      <div className="card">
+        <div className="filter-row">
+          <label>Type
+            <select value={filter} onChange={e=>setFilter(e.target.value)}>
+              {types.map(t=> <option key={t} value={t}>{t==='ALL' ? 'All events' : (EVENT_STYLE[t]?EVENT_STYLE[t].label:t)} ({t==='ALL'?events.length:(counts[t]||0)})</option>)}
+            </select>
+          </label>
+          <label>Symbol
+            <input placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)}/>
+          </label>
+          <button className="btn-ghost" onClick={load}>⟳ Reload</button>
+        </div>
+        {shown.length === 0 ? <div className="note">No events yet — consecutive scans surface RS leaders, score surges, MB elites and top-ranked sectors.</div> : (
+          Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,rows])=>(
+            <div key={date} style={{marginTop:10}}>
+              <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)',marginBottom:6}}>{date} · {rows.length} events</div>
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                {rows.map((e,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg2)',border:'1px solid var(--wire)',borderRadius:8,cursor:'pointer'}} onClick={()=>setExplain(e.symbol)}>
+                    <span className={`badge badge-${(EVENT_STYLE[e.event]||{cls:'ELITE'}).cls}`}>{(EVENT_STYLE[e.event]||{label:e.event}).label}</span>
+                    <span style={{color:'var(--t0)',fontWeight:700}}>{e.symbol.replace('.NS','')}</span>
+                    <span style={{color:'var(--t2)',flex:1}}>{e.detail}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--sky)'}}>explain ▸</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      {explain && <Explain symbol={explain} onClose={()=>setExplain(null)}/>}
+    </div>
+  );
+}
+
 /* ── APP ──────────────────────────────────────────────────────────────── */
 function App(){
   const [tab,setTab] = useState('Dashboard');
@@ -1324,6 +1515,7 @@ function App(){
         {tab==='Elite Picks' && <ElitePicks/>}
         {tab==='Discovery' && <Discovery/>}
         {tab==='Research' && <Research/>}
+        {tab==='Ideas' && <Ideas/>}
         {tab==='Portfolio' && <Portfolio/>}
         {tab==='Backtest' && <Backtest/>}
       </div>

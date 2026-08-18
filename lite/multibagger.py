@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — 100-Bagger Detector (Phase 4).
+Sovereign Lite v15 — 100-Bagger Detector (Phase 4).
 
 Seven Lynch/Minervini/O'Neil style rules with smooth scoring:
 

@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — portfolio construction layer.
+Sovereign Lite v15 — portfolio construction layer.
 
 Position Score = 0.40 Quality + 0.30 MB Score + 0.20 RS Rank + 0.10 Risk
 (higher = better). Allocation weights are conviction-based: the #1 position
@@ -19,6 +19,8 @@ rebalance can be judged by its after-tax value instead of executed blindly.
 All inputs degrade to None-safe math via `scoring._weighted`.
 """
 from __future__ import annotations
+
+from typing import Optional
 
 from datetime import date
 from typing import Optional
@@ -115,6 +117,94 @@ def _enforce_sector_caps(alloc: list[dict], cap_pct: float) -> list[dict]:
         if give < excess:
             break
     return alloc
+
+
+def _enforce_budgets(alloc: list[dict], budgets: dict[str, float], global_cap: float = 25.0) -> list[dict]:
+    """Per-sector budget enforcement. Sectors without an explicit budget fall
+    back to `global_cap`. Same redistribution-to-cash behavior as the global
+    cap: excess that no sector can absorb is left unplaced (cash), never
+    oscillated."""
+    if not budgets:
+        return alloc
+    for _ in range(50):
+        by_sector: dict[str, float] = {}
+        for a in alloc:
+            by_sector[a["sector"]] = by_sector.get(a["sector"], 0.0) + a["weight_pct"]
+        over = {s: w for s, w in by_sector.items() if w > budgets.get(s, global_cap)}
+        if not over:
+            break
+        excess = sum(w - budgets.get(s, global_cap) for s, w in over.items())
+        under = {s: w for s, w in by_sector.items() if w < budgets.get(s, global_cap)}
+        headroom = sum(budgets.get(s, global_cap) - w for s, w in under.items())
+        give = min(excess, headroom)
+        for a in alloc:
+            s = a["sector"]
+            if s in over:
+                cap = budgets.get(s, global_cap)
+                trim = (by_sector[s] - cap) * (a["weight_pct"] / by_sector[s])
+                a["weight_pct"] = round(a["weight_pct"] - trim, 2)
+        under_names = [a for a in alloc if a["sector"] in under]
+        under_total = sum(a["weight_pct"] for a in under_names)
+        if under_total > 0:
+            for a in under_names:
+                a["weight_pct"] = round(a["weight_pct"] + give * (a["weight_pct"] / under_total), 2)
+        if give < excess:
+            break
+    return alloc
+
+
+def cash_plan(
+    alloc: list[dict],
+    records_by_symbol: dict[str, dict],
+    regime: dict,
+    breadth: Optional[dict] = None,
+) -> dict:
+    """Advisory cash management: how much cash the regime/breadth call for,
+    which names should be staged instead of bought at once, and the
+    deployment schedule for the buffer. Complements (never overrides) the
+    Kelly-Lite target — the Rebalancer shows it so you can judge a plan by
+    its cash efficiency too."""
+    equity_pct = float((regime.get("allocation") or {}).get("equity", 60))
+    base_cash = round(100.0 - equity_pct, 1)
+    extra = 0.0
+    reasons: list[str] = []
+    rg = regime.get("regime", "SIDEWAYS")
+    if rg in ("BEAR", "HIGH_VOLATILITY"):
+        extra += 8.0
+        reasons.append(f"{rg.replace('_', ' ')} regime → +8% storm buffer")
+    if breadth and breadth.get("market_health") is not None and breadth["market_health"] < 40:
+        extra += 8.0
+        reasons.append(f"breadth {breadth['market_health']}/100 → +8% until the tape recovers")
+
+    wait_for_pullback = []
+    capped_liquidity = []
+    for a in alloc:
+        r = records_by_symbol.get(a["symbol"]) or {}
+        rs = r.get("rs_rank")
+        score = r.get("score")
+        if rs is not None and score is not None and rs >= 95 and score < 72:
+            wait_for_pullback.append(a["symbol"])
+        liq = r.get("liquidity")
+        if liq is not None and float(liq) < 0.3:
+            capped_liquidity.append(a["symbol"])
+
+    target_cash = round(min(50.0, base_cash + extra), 1)
+    deploy = []
+    if extra > 0:
+        half = round(extra / 2, 1)
+        deploy.append({"phase": "on_improvement", "pct": half, "trigger": "breadth > 40 and regime normalizes"})
+        deploy.append({"phase": "reserve", "pct": round(extra - half, 1), "trigger": "held until the next scan confirms the improvement"})
+    else:
+        deploy.append({"phase": "now", "pct": 0.0, "trigger": "no buffer — deploy per the Kelly-Lite target"})
+    return {
+        "base_cash_pct": base_cash,
+        "target_cash_pct": target_cash,
+        "extra_buffer": round(extra, 1),
+        "reasons": reasons,
+        "wait_for_pullback": wait_for_pullback,
+        "capped_liquidity": capped_liquidity,
+        "deploy_schedule": deploy,
+    }
 
 
 def sector_weights(alloc: list[dict]) -> dict[str, float]:
@@ -217,7 +307,7 @@ def portfolio_risk(alloc: list[dict], records_by_symbol: dict[str, dict],
     }
 
 
-# ── Tax-aware rebalancing (v14) ────────────────────────────────────────────
+# ── Tax-aware rebalancing ─────────────────────────────────────────────────
 
 REBALANCE_PARAMS = {
     # Flat Indian equity tax assumptions (delivery): 30% STCG within a year,
@@ -370,6 +460,7 @@ def build_allocation(
     top_n: int = 8,
     mode: str = "kelly",
     max_sector_weight: float = 25.0,
+    budgets: Optional[dict] = None,
 ) -> list[dict]:
     """Conviction-weighted allocation over the top-N by position score.
 
@@ -403,4 +494,6 @@ def build_allocation(
             }
         )
     out = _enforce_sector_caps(out, float(max_sector_weight))
+    if budgets:
+        out = _enforce_budgets(out, budgets, float(max_sector_weight))
     return out

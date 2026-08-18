@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — scoring engine (Phase 2).
+Sovereign Lite v15 — scoring engine (Phase 2).
 
 Every raw metric is sigmoid-normalized to 0-100 (no binary cliff thresholds).
 

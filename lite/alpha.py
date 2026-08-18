@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — alpha decay, factor IC, and regime-learned weights.
+Sovereign Lite v15 — alpha decay, factor IC, and regime-learned weights.
 
 After each scan we can measure whether the model actually works:
 

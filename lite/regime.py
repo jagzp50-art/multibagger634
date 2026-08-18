@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — market regime (Phase 3).
+Sovereign Lite v15 — market regime (Phase 3).
 
 Rules (in priority order):
   HIGH_VOLATILITY  India VIX > 20

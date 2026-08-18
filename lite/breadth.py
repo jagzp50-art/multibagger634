@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — market breadth engine.
+Sovereign Lite v15 — market breadth engine.
 
 Measures how many universe members are above their 20 / 50 / 200-day moving
 averages and blends them into a single market-health score:

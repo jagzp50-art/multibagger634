@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — a single-user, SQLite + yFinance-only NSE stock platform.
+Sovereign Lite v15 — a single-user, SQLite + yFinance-only NSE stock platform.
 
 Phases:
   1. Data layer: 5 SQLite tables, one data source (yfinance)
@@ -10,5 +10,5 @@ Phases:
 """
 
 # Single source of truth — import VERSION from this module everywhere.
-VERSION = "14.0.0"
+VERSION = "15.0.0"
 __version__ = VERSION

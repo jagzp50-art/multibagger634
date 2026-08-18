@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — SQLite data layer.
+Sovereign Lite v15 — SQLite data layer.
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol
@@ -8,6 +8,11 @@ Sovereign Lite v14 — SQLite data layer.
     backtests     stored backtest runs (params / equity curve / summary)
     benchmarks    stored index closes (NIFTY 50 / Midcap 150 / Smallcap 250)
     allocations   saved portfolio allocations (for tax-aware rebalancing)
+    sector_budgets  per-sector portfolio budgets (default: global 25% cap)
+    rebalance_runs  tax-aware rebalance plans + execution state (applied?)
+    quarterly_revisions  reported-quarter revision events (revenue/PAT qoq)
+    delivery_data  NSE daily delivery position (volume / delivery % per name)
+    factor_scores long-format factor history (symbol, scan_date, factor, value)
 """
 from __future__ import annotations
 
@@ -262,6 +267,53 @@ CREATE TABLE IF NOT EXISTS allocations (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_allocations_date ON allocations (scan_date);
+
+CREATE TABLE IF NOT EXISTS sector_budgets (
+    sector     TEXT PRIMARY KEY,
+    budget_pct REAL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rebalance_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT,
+    plan_json  TEXT,
+    applied    INTEGER DEFAULT 0,
+    applied_at TEXT,
+    notes      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS quarterly_revisions (
+    symbol           TEXT,
+    period_end       TEXT,
+    scan_date        TEXT,
+    revenue_qoq_pct  REAL,
+    net_income_qoq_pct REAL,
+    direction        TEXT,
+    is_first_seen    INTEGER DEFAULT 0,
+    PRIMARY KEY (symbol, period_end)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_data (
+    symbol       TEXT,
+    date         TEXT,
+    volume       REAL,
+    delivery_qty REAL,
+    delivery_pct REAL,
+    source       TEXT,
+    PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_date ON delivery_data (date);
+
+CREATE TABLE IF NOT EXISTS factor_scores (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol     TEXT,
+    scan_date  TEXT,
+    factor     TEXT,
+    value      REAL,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_factor_scores_sym ON factor_scores (symbol, factor);
 """
 
 
@@ -1371,6 +1423,247 @@ def load_failed_symbols(limit: int = 50) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# ── Sector budgets (per-sector portfolio caps) ─────────────────────────────
+
+def load_sector_budgets() -> dict[str, float]:
+    """{sector: budget_pct} for sectors with a stored budget."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT sector, budget_pct FROM sector_budgets").fetchall()
+        return {r["sector"]: float(r["budget_pct"]) for r in rows if r["budget_pct"]}
+    finally:
+        conn.close()
+
+
+def save_sector_budgets(budgets: dict) -> int:
+    """Upsert per-sector budgets (missing sectors fall back to the global cap)."""
+    conn = get_connection()
+    ts = datetime.now().isoformat(timespec="seconds")
+    try:
+        for sector, pct in budgets.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO sector_budgets (sector, budget_pct, updated_at) VALUES (?, ?, ?)",
+                (str(sector), _num(pct), ts),
+            )
+        conn.commit()
+        return len(budgets)
+    finally:
+        conn.close()
+
+
+# ── Rebalance execution tracking ───────────────────────────────────────────
+
+def save_rebalance_run(plan: dict) -> int:
+    """Persist a computed rebalance plan (unapplied)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO rebalance_runs (created_at, plan_json, applied) VALUES (?, ?, 0)",
+            (datetime.now().isoformat(timespec="seconds"), json.dumps(plan, default=str)),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def load_rebalance_runs(limit: int = 10) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM rebalance_runs ORDER BY id DESC LIMIT ?", (int(limit),)
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["plan"] = json.loads(d.pop("plan_json") or "{}")
+            except (TypeError, ValueError):
+                d["plan"] = {}
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def mark_rebalance_applied(run_id: int, notes: str = "") -> bool:
+    """Mark a plan as executed (the target book becomes the next baseline)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE rebalance_runs SET applied = 1, applied_at = ?, notes = ? WHERE id = ? AND applied = 0",
+            (datetime.now().isoformat(timespec="seconds"), notes, int(run_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Quarterly revision tracking ────────────────────────────────────────────
+
+def save_quarterly_revisions(rows: Iterable[dict]) -> int:
+    """Upsert reported-quarter revision events (qoq revenue/PAT deltas)."""
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO quarterly_revisions "
+            "(symbol, period_end, scan_date, revenue_qoq_pct, net_income_qoq_pct, direction, is_first_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["symbol"],
+                    r["period_end"],
+                    r.get("scan_date"),
+                    _num(r.get("revenue_qoq_pct")),
+                    _num(r.get("net_income_qoq_pct")),
+                    r.get("direction"),
+                    1 if r.get("is_first_seen") else 0,
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def latest_revision_period(symbol: str) -> Optional[str]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT MAX(period_end) FROM quarterly_revisions WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def load_quarterly_revisions(symbol: Optional[str] = None, limit: int = 40) -> list[dict]:
+    conn = get_connection()
+    try:
+        if symbol:
+            rows = conn.execute(
+                "SELECT * FROM quarterly_revisions WHERE symbol = ? ORDER BY period_end DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM quarterly_revisions ORDER BY period_end DESC, symbol LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── NSE delivery data ──────────────────────────────────────────────────────
+
+def upsert_delivery_rows(rows: Iterable[dict]) -> int:
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO delivery_data (symbol, date, volume, delivery_qty, delivery_pct, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["symbol"],
+                    r["date"],
+                    _num(r.get("volume")),
+                    _num(r.get("delivery_qty")),
+                    _num(r.get("delivery_pct")),
+                    r.get("source"),
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def latest_delivery_date() -> Optional[str]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT MAX(date) FROM delivery_data").fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def delivery_coverage() -> dict:
+    """{date: {n, avg_pct}} for the last 10 stored delivery dates."""
+    conn = get_connection()
+    try:
+        out = {}
+        for r in conn.execute(
+            "SELECT date, COUNT(*) AS n, AVG(delivery_pct) AS avg_pct "
+            "FROM delivery_data GROUP BY date ORDER BY date DESC LIMIT 10"
+        ).fetchall():
+            d = dict(r)
+            d["avg_pct"] = round(d["avg_pct"], 1) if d["avg_pct"] is not None else None
+            out[r["date"]] = d
+        return out
+    finally:
+        conn.close()
+
+
+def load_delivery(symbol: Optional[str] = None, limit: int = 60) -> list[dict]:
+    conn = get_connection()
+    try:
+        if symbol:
+            rows = conn.execute(
+                "SELECT * FROM delivery_data WHERE symbol = ? ORDER BY date DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM delivery_data ORDER BY date DESC, symbol LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── factor_scores (long format, for future factor research) ────────────────
+
+def save_factor_scores(symbol: str, scan_date: str, factors: dict) -> int:
+    conn = get_connection()
+    ts = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn.executemany(
+            "INSERT INTO factor_scores (symbol, scan_date, factor, value, created_at) VALUES (?, ?, ?, ?, ?)",
+            [(symbol, scan_date, str(f), _num(v), ts) for f, v in factors.items() if v is not None],
+        )
+        conn.commit()
+        return len([f for f, v in factors.items() if v is not None])
+    finally:
+        conn.close()
+
+
+def load_factor_scores(symbol: str, factor: Optional[str] = None, limit: int = 200) -> list[dict]:
+    conn = get_connection()
+    try:
+        if factor:
+            rows = conn.execute(
+                "SELECT scan_date, factor, value FROM factor_scores "
+                "WHERE symbol = ? AND factor = ? ORDER BY id DESC LIMIT ?",
+                (symbol, factor, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT scan_date, factor, value FROM factor_scores "
+                "WHERE symbol = ? ORDER BY id DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    finally:
+        conn.close()
+
 
 
 def _num(v: Any) -> Optional[float]:

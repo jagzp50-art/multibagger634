@@ -1137,7 +1137,7 @@ def test_health_reports_single_source_version(tmp_path, monkeypatch):
     app = api.create_app()
     routes = {r.path: r for r in app.routes if hasattr(r, "path")}
     body = routes["/api/health"].endpoint()
-    assert body["version"] == lite.VERSION == "14.0.0"
+    assert body["version"] == lite.VERSION == "15.0.0"
 
 
 def test_explain_endpoint_shape(tmp_path, monkeypatch):
@@ -1275,3 +1275,175 @@ def test_benchmarks_and_rebalance_endpoints(tmp_path, monkeypatch):
     assert rb["plan"]["n_prev"] == 1
     assert rb["plan"]["trades"][0]["side"] in ("HOLD", "ADD", "SELL")
     assert "total_drag_pct" in rb["plan"]
+
+
+# ── v15: cash plan / sector budgets / rebalance runs / revisions / delivery ─
+
+def test_cash_plan_buffers_and_staging():
+    from lite import portfolio
+
+    alloc = [
+        {"symbol": "A.NS", "sector": "IT", "weight_pct": 30.0},
+        {"symbol": "B.NS", "sector": "Fin", "weight_pct": 20.0},
+        {"symbol": "C.NS", "sector": "Auto", "weight_pct": 10.0},
+    ]
+    recs = {
+        "A.NS": {"rs_rank": 98.0, "score": 60.0, "liquidity": 0.9},   # overextended + weak score → wait for pullback
+        "B.NS": {"rs_rank": 70.0, "score": 85.0, "liquidity": 0.2},   # thin liquidity → cap
+        "C.NS": {"rs_rank": 50.0, "score": 80.0, "liquidity": 0.8},
+    }
+    cp = portfolio.cash_plan(alloc, recs, {"regime": "BEAR", "allocation": {"equity": 60}}, {"market_health": 30})
+    assert cp["base_cash_pct"] == 40.0
+    assert cp["extra_buffer"] == 16.0  # BEAR +8, breadth<40 +8
+    assert cp["target_cash_pct"] == 50.0
+    assert "A.NS" in cp["wait_for_pullback"]
+    assert "B.NS" in cp["capped_liquidity"]
+    assert len(cp["reasons"]) == 2 and len(cp["deploy_schedule"]) == 2
+    # Neutral regime + healthy breadth → no buffer
+    cp2 = portfolio.cash_plan(alloc, recs, {"regime": "BULL", "allocation": {"equity": 70}}, {"market_health": 75})
+    assert cp2["extra_buffer"] == 0.0 and cp2["target_cash_pct"] == 30.0
+
+
+def test_sector_budgets_enforce_per_sector_caps():
+    from lite import portfolio
+
+    # Financials at 45% must trim to its 25% budget while IT stays under its 20%.
+    alloc = [
+        {"symbol": "A.NS", "sector": "Fin", "weight_pct": 25.0},
+        {"symbol": "B.NS", "sector": "Fin", "weight_pct": 20.0},
+        {"symbol": "C.NS", "sector": "IT", "weight_pct": 15.0},
+    ]
+    out = portfolio._enforce_budgets(alloc, {"Fin": 25.0, "IT": 20.0}, global_cap=25.0)
+    fin = sum(a["weight_pct"] for a in out if a["sector"] == "Fin")
+    it = sum(a["weight_pct"] for a in out if a["sector"] == "IT")
+    assert fin <= 25.0 + 0.01
+    assert it <= 20.0 + 0.01
+    # No budgets dict → unchanged behavior (global cap still applies upstream)
+    assert portfolio._enforce_budgets(list(alloc), {}, 25.0) == alloc
+
+
+def test_sector_budgets_db_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "budgets.db"))
+    db_mod.init_db()
+    assert db_mod.load_sector_budgets() == {}
+    db_mod.save_sector_budgets({"Financial Services": 25.0, "IT": 20.0})
+    got = db_mod.load_sector_budgets()
+    assert got["Financial Services"] == 25.0 and got["IT"] == 20.0
+
+
+def test_rebalance_runs_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "runs.db"))
+    db_mod.init_db()
+    rid = db_mod.save_rebalance_run({"turnover_pct": 12.5, "total_tax": 4000.0})
+    runs = db_mod.load_rebalance_runs()
+    assert runs[0]["id"] == rid and runs[0]["applied"] == 0
+    assert runs[0]["plan"]["turnover_pct"] == 12.5
+    assert db_mod.mark_rebalance_applied(rid, "executed") is True
+    assert db_mod.mark_rebalance_applied(rid) is False  # already applied
+    assert db_mod.load_rebalance_runs()[0]["applied"] == 1
+
+
+def test_quarterly_revision_detection(tmp_path, monkeypatch):
+    import lite.db as db_mod
+    from lite import pipeline
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "rev.db"))
+    db_mod.init_db()
+    db_mod.upsert_quarterly_results("X.NS", [
+        {"period_end": "2025-06-30", "quarter": "2025Q1", "revenue": 100.0, "net_income": 10.0, "net_margin": 10.0},
+        {"period_end": "2025-09-30", "quarter": "2025Q2", "revenue": 120.0, "net_income": 15.0, "net_margin": 12.5},
+    ])
+    n = pipeline._track_quarterly_revisions(["X.NS"])
+    assert n == 1
+    rows = db_mod.load_quarterly_revisions("X.NS")
+    assert rows[0]["direction"] == "UPGRADE"          # rev +20%, PAT +50%
+    assert rows[0]["revenue_qoq_pct"] == pytest.approx(20.0)
+    assert rows[0]["net_income_qoq_pct"] == pytest.approx(50.0)
+    assert rows[0]["is_first_seen"] == 1
+    # Second call → nothing new (period already tracked)
+    assert pipeline._track_quarterly_revisions(["X.NS"]) == 0
+
+
+def test_delivery_parse_and_db(tmp_path, monkeypatch):
+    import lite.db as db_mod
+    from lite import delivery
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "del.db"))
+    db_mod.init_db()
+    csv_text = (
+        "SYMBOL,SERIES,TTL_TRADED_QTY,DELIV_QTY,DELIV_PER\n"
+        "RELIANCE,EQ,1000,600,60.00\n"
+        "TCS,EQ,2000,300,15.00\n"
+        "NIFTY,FUT,500,500,100.00\n"   # non-EQ → skipped
+    )
+    rows = delivery._parse_delivery_csv(csv_text, "2026-08-17")
+    assert len(rows) == 2
+    assert rows[0]["symbol"] == "RELIANCE.NS"
+    assert rows[0]["delivery_pct"] == 60.0
+    assert rows[1]["symbol"] == "TCS.NS" and rows[1]["delivery_pct"] == 15.0
+    assert db_mod.upsert_delivery_rows(rows) == 2
+    assert db_mod.latest_delivery_date() == "2026-08-17"
+    cov = db_mod.delivery_coverage()
+    assert cov["2026-08-17"]["n"] == 2
+    loaded = db_mod.load_delivery("RELIANCE.NS")
+    assert loaded[0]["delivery_qty"] == 600.0
+    # Signal needs history; with one day it degrades gracefully to a
+    # delivery-% fallback (delivery_score=None) instead of returning nothing.
+    assert delivery.delivery_signal("RELIANCE.NS") is None
+    acc = delivery.delivery_accumulators(limit=5)
+    assert any(a["symbol"] == "RELIANCE.NS" and a["delivery_score"] is None for a in acc)
+
+
+def test_factor_scores_roundtrip(tmp_path, monkeypatch):
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "fs2.db"))
+    db_mod.init_db()
+    db_mod.save_factor_scores("Y.NS", "2026-08-17", {"quality": 80.0, "momentum": None, "risk": 30.0})
+    rows = db_mod.load_factor_scores("Y.NS")
+    assert len(rows) == 2  # None values skipped
+    assert {r["factor"] for r in rows} == {"quality", "risk"}
+    m = db_mod.load_factor_scores("Y.NS", factor="quality")
+    assert m[-1]["value"] == 80.0
+
+
+def test_v15_endpoints(tmp_path, monkeypatch):
+    import lite
+    from lite import api, db as db_mod
+
+    rec = _seed_explain_db(tmp_path, monkeypatch)
+    db_mod.save_sector_budgets({"Retail": 20.0})
+    db_mod.save_quarterly_revisions([{
+        "symbol": "TRENT.NS", "period_end": "2025-09-30", "scan_date": "2025-10-01",
+        "revenue_qoq_pct": 8.0, "net_income_qoq_pct": 12.0, "direction": "UPGRADE", "is_first_seen": True,
+    }])
+    db_mod.upsert_delivery_rows([{
+        "symbol": "TRENT.NS", "date": "2026-08-17", "volume": 1000.0,
+        "delivery_qty": 600.0, "delivery_pct": 60.0, "source": "nse",
+    }])
+    app = api.create_app()
+    # GET-first route map (POST routes share the same paths).
+    routes = {}
+    for r in app.routes:
+        if hasattr(r, "path") and hasattr(r, "methods"):
+            if any(m.lower() == "get" for m in r.methods) and r.path not in routes:
+                routes[r.path] = r
+    assert routes["/api/sector-budgets"].endpoint()["Retail"] == 20.0
+    runs = routes["/api/rebalance/runs"].endpoint()
+    assert isinstance(runs, list)
+    revs = routes["/api/revisions"].endpoint()
+    assert revs[0]["direction"] == "UPGRADE"
+    dl = routes["/api/delivery"].endpoint()
+    assert dl["latest_date"] == "2026-08-17"
+    fs = routes["/api/factor-scores/{symbol}"].endpoint("TRENT.NS")
+    assert isinstance(fs, list)
+    ev = routes["/api/events"].endpoint()
+    assert isinstance(ev, list)
+    # Portfolio endpoint exposes the cash plan + budgets
+    pf = routes["/api/portfolio"].endpoint()
+    assert "cash_plan" in pf and "sector_budgets" in pf
+    assert pf["sector_budgets"]["Retail"] == 20.0

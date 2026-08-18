@@ -1,5 +1,5 @@
 """
-Sovereign Lite v14 — FastAPI application.
+Sovereign Lite v15 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 
 from . import VERSION, alpha
 from . import backtest as bt
-from . import breadth, data, db, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
+from . import breadth, data, db, delivery, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .pipeline import run_scan
 from .universe import default_universe
 
@@ -439,7 +439,11 @@ def create_app() -> FastAPI:
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
         rows = _merge(scores, fundas)
         equity_pct = float(regime.get("allocation", {}).get("equity", 60))
-        alloc = portfolio.build_allocation(rows, equity_pct, top_n=top_n, mode=mode, max_sector_weight=max_sector_weight)
+        budgets = db.load_sector_budgets()
+        alloc = portfolio.build_allocation(
+            rows, equity_pct, top_n=top_n, mode=mode,
+            max_sector_weight=max_sector_weight, budgets=budgets or None,
+        )
         records_by_symbol = {r["symbol"]: r for r in rows}
         return _json_safe(
             {
@@ -449,8 +453,10 @@ def create_app() -> FastAPI:
                 "mode": mode,
                 "max_sector_weight": max_sector_weight,
                 "sector_weights": portfolio.sector_weights(alloc),
+                "sector_budgets": budgets,
                 "factor_exposure": portfolio.factor_exposure(alloc, records_by_symbol),
                 "portfolio_risk": portfolio.portfolio_risk(alloc, records_by_symbol, equity_pct),
+                "cash_plan": portfolio.cash_plan(alloc, records_by_symbol, regime, _fresh_breadth()),
             }
         )
 
@@ -546,7 +552,7 @@ def create_app() -> FastAPI:
     def backtests(limit: int = 10):
         return _json_safe(db.load_backtests(limit=limit))
 
-    # ── Benchmark indices + tax-aware rebalancing (v14) ──────────────────────
+    # ── Benchmark indices + tax-aware rebalancing ────────────────────────────
 
     @app.get("/api/benchmarks")
     def benchmarks_status():
@@ -575,8 +581,10 @@ def create_app() -> FastAPI:
         fundas = {f["symbol"]: f for f in db.load_fundamentals()}
         rows = _merge(scores, fundas)
         equity_pct = float(regime.get("allocation", {}).get("equity", 60))
+        budgets = db.load_sector_budgets()
         target = portfolio.build_allocation(
-            rows, equity_pct, top_n=top_n, mode=mode, max_sector_weight=max_sector_weight
+            rows, equity_pct, top_n=top_n, mode=mode,
+            max_sector_weight=max_sector_weight, budgets=budgets or None,
         )
         first_seen = {}
         for sym in db.universe_symbols():
@@ -587,14 +595,76 @@ def create_app() -> FastAPI:
         plan = portfolio.rebalance_plan(
             target, (prev_snap or {}).get("rows") or [], first_seen=first_seen, price_pairs=pairs
         )
+        records_by_symbol = {r["symbol"]: r for r in rows} if isinstance(rows, list) else {}
+        plan["cash_plan"] = portfolio.cash_plan(target, records_by_symbol, regime, _fresh_breadth())
+        run_id = db.save_rebalance_run(plan)
         return _json_safe(
             {
                 "plan": plan,
+                "run_id": run_id,
                 "prev_scan_date": (prev_snap or {}).get("scan_date"),
                 "prev_mode": (prev_snap or {}).get("mode"),
                 "target": target,
             }
         )
+
+    # ── v15: sector budgets / rebalance runs / revisions / delivery / events ─
+
+    @app.get("/api/sector-budgets")
+    def sector_budgets_get():
+        """Per-sector portfolio budgets (missing sectors use the global cap)."""
+        return _json_safe(db.load_sector_budgets())
+
+    @app.post("/api/sector-budgets")
+    def sector_budgets_set(body: dict):
+        """Upsert per-sector budgets, e.g. {"Financial Services": 25, "IT": 20}."""
+        cleaned = {str(k): float(v) for k, v in (body or {}).items() if v is not None}
+        n = db.save_sector_budgets(cleaned)
+        return {"status": "ok", "saved": n, "budgets": db.load_sector_budgets()}
+
+    @app.get("/api/rebalance/runs")
+    def rebalance_runs(limit: int = 10):
+        """Past rebalance plans + whether each was applied."""
+        return _json_safe(db.load_rebalance_runs(limit=max(1, min(int(limit), 50))))
+
+    @app.post("/api/rebalance/{run_id}/apply")
+    def rebalance_apply(run_id: int, body: Optional[dict] = None):
+        """Mark a plan as executed; its target book becomes the next baseline."""
+        applied = db.mark_rebalance_applied(run_id, str((body or {}).get("notes", ""))[:200])
+        if not applied:
+            raise HTTPException(status_code=404, detail="Run not found or already applied")
+        return {"status": "ok", "run_id": run_id}
+
+    @app.get("/api/revisions")
+    def revisions(symbol: Optional[str] = None, limit: int = 40):
+        """Reported-quarter revision events (revenue/PAT qoq, UPGRADE/DOWNGRADE)."""
+        return _json_safe(db.load_quarterly_revisions(symbol=symbol, limit=max(1, min(int(limit), 200))))
+
+    @app.get("/api/delivery")
+    def delivery_status():
+        """Stored NSE delivery coverage + top accumulators."""
+        return _json_safe(
+            {
+                "coverage": db.delivery_coverage(),
+                "latest_date": db.latest_delivery_date(),
+                "accumulators": delivery.delivery_accumulators(limit=10),
+            }
+        )
+
+    @app.post("/api/delivery/refresh")
+    def delivery_refresh():
+        """Fetch + persist the latest NSE delivery session (best-effort)."""
+        return _json_safe(delivery.refresh_delivery(max_days_back=5, timeout=20))
+
+    @app.get("/api/events")
+    def events(limit: int = 80):
+        """Watchlist intelligence feed for the Ideas screen."""
+        return _json_safe(db.load_watchlist_events(limit=max(1, min(int(limit), 200))))
+
+    @app.get("/api/factor-scores/{symbol}")
+    def factor_scores(symbol: str, factor: Optional[str] = None, limit: int = 200):
+        """Long-format factor history for one name (research table)."""
+        return _json_safe(db.load_factor_scores(symbol, factor=factor, limit=max(1, min(int(limit), 500))))
 
     # ── Portfolio helpers ────────────────────────────────────────────────────
 
