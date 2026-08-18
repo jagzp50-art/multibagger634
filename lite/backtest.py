@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — one-click backtest (Phase 5).
+Sovereign Lite v17 — one-click backtest (Phase 5).
 
 A clean, lookahead-free momentum strategy over the stored price history:
 

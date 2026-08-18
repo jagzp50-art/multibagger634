@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — yFinance-only data layer.
+Sovereign Lite v17 — yFinance-only data layer.
 
   - Price history: batched `yf.download` (one request per symbol, threaded by yf)
   - Fundamentals: per-symbol `Ticker.info` + quarterly income statement,

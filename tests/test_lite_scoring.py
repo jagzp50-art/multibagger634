@@ -1137,7 +1137,7 @@ def test_health_reports_single_source_version(tmp_path, monkeypatch):
     app = api.create_app()
     routes = {r.path: r for r in app.routes if hasattr(r, "path")}
     body = routes["/api/health"].endpoint()
-    assert body["version"] == lite.VERSION == "16.0.0"
+    assert body["version"] == lite.VERSION == "17.0.0"
 
 
 def test_explain_endpoint_shape(tmp_path, monkeypatch):
@@ -1622,3 +1622,87 @@ def test_v16_research_endpoint_correlation_crowding(tmp_path, monkeypatch):
     assert out["crowding"]["exposure"]
     assert out["crowding"]["top"]["factor"] in out["crowding"]["exposure"]
     assert out["crowding"]["concentrated"] is True
+
+# ── v17: /api/explain/{symbol} bad-input hardening ─────────────────────────
+
+def test_explain_unknown_symbol_is_404(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    from lite import api
+
+    _seed_explain_db(tmp_path, monkeypatch)
+    app = api.create_app()
+    ep = next(r.endpoint for r in app.routes if getattr(r, "path", "") == "/api/explain/{symbol}")
+    with pytest.raises(HTTPException) as ei:
+        ep("NOPE.NS")
+    assert ei.value.status_code == 404
+    assert "NOPE.NS" in str(ei.value.detail)
+
+
+def test_explain_missing_fundamentals_and_history_is_empty_payload(tmp_path, monkeypatch):
+    from lite import api
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "explain_empty.db"))
+    db_mod.init_db()
+    db_mod.upsert_scores([{"symbol": "FRESH.NS", "score": 71.0, "rank": 9,
+                           "factor_contributions": {"quality": 10.0, "growth": 8.0}}])
+    app = api.create_app()
+    ep = next(r.endpoint for r in app.routes if getattr(r, "path", "") == "/api/explain/{symbol}")
+    out = ep("FRESH.NS")
+    assert out["score"] == 71.0
+    assert out["sector"] is None and out["name"] is None and out["market_cap"] is None
+    assert out["score_history"] == [] and out["score_delta"] is None
+    assert out["best_positive"]["factor"] == "quality" and out["best_negative"] is not None
+
+
+def test_explain_string_contributions_are_coerced(tmp_path, monkeypatch):
+    from lite import api
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "explain_str.db"))
+    db_mod.init_db()
+    # Numeric strings in factor_contributions (legacy / hand-inserted row) used
+    # to crash the endpoint with `'>' not supported between 'str' and 'int'`.
+    db_mod.upsert_scores([{"symbol": "TRENT.NS", "score": 92.0, "rank": 3,
+                           "factor_contributions": {"quality": "27", "growth": "22",
+                                                    "momentum": "18", "valuation": "8",
+                                                    "risk": "6"}}])
+    app = api.create_app()
+    ep = next(r.endpoint for r in app.routes if getattr(r, "path", "") == "/api/explain/{symbol}")
+    out = ep("TRENT.NS")
+    assert out["contributions"] == {"quality": 27.0, "growth": 22.0, "momentum": 18.0,
+                                    "valuation": 8.0, "risk": 6.0}
+    assert out["best_positive"]["factor"] == "quality"
+    assert out["best_negative"]["factor"] == "risk"
+
+
+def test_explain_non_dict_and_junk_contributions_do_not_crash(tmp_path, monkeypatch):
+    from lite import api
+    import lite.db as db_mod
+
+    monkeypatch.setattr(db_mod, "DB_PATH", str(tmp_path / "explain_junk.db"))
+    db_mod.init_db()
+    db_mod.upsert_scores([{"symbol": "JUNK.NS", "score": 50.0, "rank": 20}])
+    conn = db_mod.get_connection()
+    # Double-encoded string (valid JSON, wrong shape) — load_scores must normalize.
+    conn.execute(
+        "UPDATE scores SET factor_contributions = ? WHERE symbol = ?",
+        ('[1, 2, 3]', 'JUNK.NS'),
+    )
+    conn.commit()
+    conn.close()
+    rows = db_mod.load_scores()
+    assert rows[0]["factor_contributions"] == {}
+
+    # Fully corrupt JSON — json.loads fails, loader falls back to {}.
+    conn = db_mod.get_connection()
+    conn.execute("UPDATE scores SET factor_contributions='{not json' WHERE symbol='JUNK.NS'")
+    conn.commit()
+    conn.close()
+    app = api.create_app()
+    ep = next(r.endpoint for r in app.routes if getattr(r, "path", "") == "/api/explain/{symbol}")
+    out = ep("JUNK.NS")
+    assert out["contributions"] == {}
+    assert out["best_positive"] is None and out["best_negative"] is None
+    assert out["score"] == 50.0

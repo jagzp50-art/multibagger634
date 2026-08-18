@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — discovery engine (Emerging Leaders).
+Sovereign Lite v17 — discovery engine (Emerging Leaders).
 
 The core universe is curated and stable; the Discovery tier is where
 multibaggers show up before they become obvious. This module ranks

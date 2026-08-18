@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — two-tier curated NSE universe.
+Sovereign Lite v17 — two-tier curated NSE universe.
 
   CORE      — ~155 curated large/mid/small caps (fast daily scan).
   DISCOVERY — ~450 more names mined from the repo's broader NSE symbol list

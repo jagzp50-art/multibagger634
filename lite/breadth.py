@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — market breadth engine.
+Sovereign Lite v17 — market breadth engine.
 
 Measures how many universe members are above their 20 / 50 / 200-day moving
 averages and blends them into a single market-health score:

@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — NSE daily delivery position (accumulation/distribution).
+Sovereign Lite v17 — NSE daily delivery position (accumulation/distribution).
 
 yFinance has no delivery data, so this module reads NSE's public daily
 "delivery position" report (MA{DDMMYYYY}.csv under nsearchives) directly.

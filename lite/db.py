@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — SQLite data layer.
+Sovereign Lite v17 — SQLite data layer.
 
     stocks        universe membership (symbol, name, sector)
     prices        daily OHLCV per symbol
@@ -824,9 +824,14 @@ def load_scores() -> list[dict]:
             except (TypeError, ValueError):
                 d["mb_checklist"] = []
             try:
-                d["factor_contributions"] = json.loads(d.get("factor_contributions") or "{}")
+                fc = json.loads(d.get("factor_contributions") or "{}")
             except (TypeError, ValueError):
-                d["factor_contributions"] = {}
+                fc = {}
+            # Storage is untyped: a legacy/hand-written row may hold valid JSON
+            # that is not a dict (e.g. a string or array). Consumers expect a
+            # {factor: value} map — normalize here so nothing downstream can
+            # crash on `fc.get(...)`.
+            d["factor_contributions"] = fc if isinstance(fc, dict) else {}
             out.append(d)
         return out
     finally:

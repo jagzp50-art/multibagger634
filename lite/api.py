@@ -1,5 +1,5 @@
 """
-Sovereign Lite v16 — FastAPI application.
+Sovereign Lite v17 — FastAPI application.
 
 Serves the 5-screen dashboard and a small JSON API. All heavy work (scan,
 backtest) runs synchronously in FastAPI's threadpool — fine for one user.
@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 
 from . import VERSION, alpha
 from . import backtest as bt
-from . import breadth, data, db, delivery, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
+from . import breakout, breadth, data, db, delivery, discovery, indicators, portfolio, regime as regime_mod, rotation, scoring, watchlist
 from .pipeline import run_scan
 from .universe import default_universe
 
@@ -179,21 +179,33 @@ def create_app() -> FastAPI:
         best positive / negative reasons, and the score history trail — the
         payload behind the Explainability drawer.
         """
+        try:
+            return _explain_payload(symbol)
+        except HTTPException:
+            raise
+        except Exception as exc:  # bad input must never surface as a raw KeyError/TypeError
+            raise HTTPException(
+                status_code=500, detail=f"explain({symbol}): {type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _explain_payload(symbol: str) -> dict:
         scores = {r["symbol"]: r for r in db.load_scores()}
         r = scores.get(symbol)
         if not r:
             raise HTTPException(status_code=404, detail=f"No scored data for {symbol}")
         f = next((f for f in db.load_fundamentals() if f["symbol"] == symbol), {})
         fc = r.get("factor_contributions") or {}
+        if not isinstance(fc, dict):
+            fc = {}
         contributions: dict[str, Optional[float]] = {}
-        for k in ("quality", "growth", "momentum", "valuation", "risk"):
+        for k in ("quality", "growth", "momentum", "valuation", "risk", "revision", "rs_boost", "sector_boost"):
             v = fc.get(k)
-            if v is not None:
-                contributions[k] = v
-        for k in ("revision", "rs_boost", "sector_boost"):
-            v = fc.get(k)
-            if v is not None:
-                contributions[k] = v
+            if v is None:
+                continue
+            try:
+                contributions[k] = float(v)  # stored values may be numeric strings
+            except (TypeError, ValueError):
+                continue
         positives = [(k, v) for k, v in contributions.items() if v is not None and v > 0]
         all_parts = [(k, v) for k, v in contributions.items() if v is not None]
         best_pos = max(positives, key=lambda kv: kv[1]) if positives else None
@@ -330,6 +342,18 @@ def create_app() -> FastAPI:
                 "updated": ic.get("updated"),
             }
         )
+
+    @app.get("/api/research/breakouts")
+    def research_breakouts():
+        """Sector Breakout Monitor: which sectors are pressing their 52-week
+        highs with broad participation — and the names leading each one."""
+        frames = {}
+        for sym in db.universe_symbols():
+            rows = db.load_prices(sym)
+            if rows:
+                frames[sym] = indicators.to_dataframe(rows)
+        fundas = {f["symbol"]: f for f in db.load_fundamentals()}
+        return _json_safe(breakout.rank_breakouts(frames, fundas))
 
     @app.get("/api/research/regimes")
     def research_regimes():
@@ -644,7 +668,7 @@ def create_app() -> FastAPI:
             }
         )
 
-    # ── v16: sector budgets / rebalance runs / revisions / delivery / events ─
+    # ── v17: sector budgets / rebalance runs / revisions / delivery / events ─
 
     @app.get("/api/sector-budgets")
     def sector_budgets_get():

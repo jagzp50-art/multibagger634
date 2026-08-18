@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Lite v16</title>
+<title>Sovereign Lite v17</title>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -176,7 +176,7 @@ function Nav({tab,setTab,regime}){
     <nav className="nav">
       <div className="nav-brand">
         <div className="nav-sigma">Σ</div>
-        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v16 · Single User</div></div>
+        <div><div className="nav-wordmark">SOVEREIGN</div><div className="nav-sub">Lite v17 · Single User</div></div>
       </div>
       <div className="nav-tabs">
         {tabs.map(t => <button key={t} className={`nav-tab${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>)}
@@ -194,6 +194,7 @@ function Dashboard(){
   const [data,setData] = useState(null);
   const [sectors,setSectors] = useState(null);
   const [quality,setQuality] = useState(null);
+  const [breakouts,setBreakouts] = useState(null);
   const [err,setErr] = useState(null);
   const [scanning,setScanning] = useState(false);
   const [scanResult,setScanResult] = useState(null);
@@ -205,7 +206,7 @@ function Dashboard(){
     j('/api/delivery').then(setDelivery).catch(()=>{});
     setDelBusy(false);
   };
-  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); j('/api/delivery').then(setDelivery).catch(()=>{}); },[load]);
+  const load = useCallback(()=>{ j('/api/dashboard').then(setData).catch(e=>setErr(e.message)); j('/api/sectors').then(setSectors).catch(()=>{}); j('/api/data-quality').then(setQuality).catch(()=>{}); j('/api/delivery').then(setDelivery).catch(()=>{}); j('/api/research/breakouts').then(setBreakouts).catch(()=>{}); },[load]);
   useEffect(load,[load]);
 
   const runScan = async (force, tier='core')=>{
@@ -392,6 +393,33 @@ function Dashboard(){
                 <div className={`num ${s.boost>=0?'up':'dn'}`} style={{fontWeight:600}}>{s.boost>=0?'+':''}{s.boost} pts</div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-hdr"><span className="card-title">Sector Breakouts</span><span className="note">sectors pressing their 52-week highs with broad participation · {breakouts ? breakouts.in_breakout.length + ' in breakout / ' + breakouts.n_sectors + ' sectors' : '—'}</span></div>
+        {!breakouts ? <Loader/> : breakouts.sectors.length === 0 ? <div className="note">No breakout map yet — needs stored price history (run a scan).</div> : (
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {breakouts.sectors.slice(0,6).map(s=>(
+              <div key={s.sector} style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',background:'var(--bg3)',border:'1px solid '+(s.breakout?'rgba(0,255,163,.35)':'var(--wire)'),borderRadius:10,padding:'9px 12px'}}>
+                <span style={{fontWeight:600,color:'var(--t0)',fontSize:12,width:150}}>{s.sector}</span>
+                {s.breakout ? <span className="badge badge-MULTIBAGGER">BREAKOUT</span> : <span className="badge badge-WATCHLIST">{s.n>=3?'building':'too few'}</span>}
+                <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t3)'}}>score {fmt(s.breakout_score,0)} · {s.n} stocks</span>
+                <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)'}}>≤5% of high <b style={{color:s.near_high_pct>=50?'var(--acid)':s.near_high_pct>=25?'var(--gold)':'var(--rose)'}}>{fmt(s.near_high_pct,0)}%</b></span>
+                <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)'}}>>200D <b style={{color:s.above_200_pct>=50?'var(--acid)':'var(--gold)'}}>{fmt(s.above_200_pct,0)}%</b></span>
+                <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--t2)'}}>3M <b className={s.mom_3m_pct>=0?'up':'dn'}>{s.mom_3m_pct!=null?pct(s.mom_3m_pct):'—'}</b></span>
+                <div style={{marginLeft:'auto',display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {s.leaders.slice(0,3).map(l=>(
+                    <span key={l.symbol} style={{fontFamily:'var(--mono)',fontSize:9,padding:'2px 7px',borderRadius:5,background:'var(--bg0)',border:'1px solid var(--wire)',color:'var(--t1)'}}>
+                      <span style={{color:'var(--t0)',fontWeight:700}}>{l.symbol.replace('.NS','')}</span>
+                      <span style={{color:'var(--t3)'}}> · {fmt(l.dist_52w_high_pct,0)}% below high</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div style={{fontSize:9,color:'var(--t3)'}}>Breakout = 35% near-high + 20% new-high zone + 20% >200D + 15% >50D + 10% 3M momentum · flagged when ≥60 with ≥3 members · leaders = closest to their 52-week high with the strongest 3M return.</div>
           </div>
         )}
       </div>
