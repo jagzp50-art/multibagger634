@@ -6,6 +6,7 @@ Serves the 5-screen dashboard + JSON API on :9005 (API_PORT / PORT aware).
 """
 import os
 
+from lite import VERSION
 from lite.api import create_app
 
 app = create_app()
@@ -16,5 +17,5 @@ if __name__ == "__main__":
 
     port = int(os.getenv("API_PORT") or os.getenv("PORT") or 9005)
     host = os.getenv("API_HOST", "0.0.0.0")
-    print(f"[lite] Sovereign Lite v{lite.VERSION.split('.')[0]} — http://{host}:{port}")
+    print(f"[lite] Sovereign Lite v{VERSION.split('.')[0]} — http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")

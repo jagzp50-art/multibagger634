@@ -116,7 +116,7 @@ def create_app() -> FastAPI:
         top = _with_prev(_merge(scores, fundas))
         top.sort(key=lambda r: r.get("score") or 0, reverse=True)
         picks = []
-        for r in top[:5]:
+        for r in top[:20]:  # feed Top Opportunities (8) + TickerStrip (up to 20)
             sym = r["symbol"]
             px = db.latest_price(sym)
             last = db.load_prices(sym)
